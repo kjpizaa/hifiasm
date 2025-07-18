@@ -52,6 +52,7 @@ See [tutorial][tutorial] for more details.
   - [Hi-C integration](#hic)
   - [Trio binning](#trio)
   - [Ultra-long ONT integration](#ul)
+  - [Reference-guided workflow](#refasm)
   - [Output files](#output)
 - [Results](#results)
 - [Getting Help](#help)
@@ -199,6 +200,23 @@ Hifiasm can preserve more telomeres by specifying the telomere motif using the `
 Below is an example applied to human genome assembly.
 ```sh
 hifiasm -o NA12878.asm -t32 --telo-m CCCTAA HiFi-reads.fq.gz
+```
+
+### <a name="refasm"></a>Reference-guided workflow
+
+Enable optional reference-guided alignment at build time:
+
+```sh
+make REF_GENOME=1
+```
+
+Phase A builds a reference index and Phase B maps unitigs against it:
+
+```sh
+# Phase A
+./hifiasm --ref ref.fa -o ref_work
+# Phase B
+./hifiasm --unitig-map ref_work/ref.fa unitigs.gfa
 ```
 
 ### <a name="output"></a>Output files

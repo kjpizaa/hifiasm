@@ -23002,7 +23002,7 @@ ma_ug_t *ul_realignment_back(const ug_opt_t *uopt, asg_t *sg, uint32_t double_ch
  * @param uid unitig ID
  * @return 序列指针，失败返回NULL
  */
-static inline const char* ensure_unitig_seq(ma_ug_t* ug, uint32_t uid) {
+const char* ensure_unitig_seq(ma_ug_t* ug, uint32_t uid) {
     if (!ug || uid >= ug->u.n) return NULL;
 
     ma_utg_t* utg = &ug->u.a[uid];
@@ -23319,3 +23319,4 @@ int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
 }
 
 #endif // ENABLE_REF_GENOME_V4
+
