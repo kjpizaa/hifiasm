@@ -81,8 +81,10 @@ static ko_longopt_t long_options[] = {
     { "ul-m",     ko_required_argument, 363},
     { "rl-cut",     ko_required_argument, 364},
     { "sc-cut",     ko_required_argument, 365},
+    { "ref",     ko_required_argument, 366},
+    { "unitig-map", ko_required_argument, 367},
     // { "path-round",     ko_required_argument, 348},
-	{ 0, 0, 0 }
+        { 0, 0, 0 }
 };
 
 double Get_T(void)
@@ -235,6 +237,11 @@ void Print_H(hifiasm_opt_t* asm_opt)
     fprintf(stderr, "    --sc-cut     INT\n");
     fprintf(stderr, "                 filter out ONT simplex reads with a mean base quality score below <INT> [%ld]\n", asm_opt->sc_cut);
 
+    fprintf(stderr, "    --ref        FILE\n");
+    fprintf(stderr, "                 reference FASTA for guided assembly [none]\n");
+    fprintf(stderr, "    --unitig-map FILE\n");
+    fprintf(stderr, "                 map unitigs to reference; skip assembly steps\n");
+
 
     fprintf(stderr, "Example: ./hifiasm -o NA12878.asm -t 32 NA12878.fq.gz\n");
     fprintf(stderr, "See `https://hifiasm.readthedocs.io/en/latest/' or `man ./hifiasm.1' for complete documentation.\n");
@@ -373,7 +380,10 @@ void init_opt(hifiasm_opt_t* asm_opt)
 
     asm_opt->rl_cut = 1000;
     asm_opt->sc_cut = 10;
-}   
+
+    asm_opt->ref_fasta = NULL;
+    asm_opt->unitig_map = NULL;
+}
 
 void destory_enzyme(enzyme* f)
 {
@@ -868,7 +878,7 @@ int CommandLine_process(int argc, char *argv[], hifiasm_opt_t* asm_opt)
 
     int c;
 
-    while ((c = ketopt(&opt, argc, argv, 1, "hvt:o:k:w:m:n:r:a:b:z:x:y:p:c:d:M:P:if:D:FN:1:2:3:4:5:l:s:O:eu:", long_options)) >= 0) {
+    while ((c = ketopt(&opt, argc, argv, 1, "hvt:o:k:w:m:n:r:a:b:z:x:y:p:c:d:M:P:if:D:FN:1:2:3:4:5:l:s:O:eu:R:U:", long_options)) >= 0) {
         if (c == 'h')
         {
             Print_H(asm_opt);
@@ -1003,6 +1013,10 @@ int CommandLine_process(int argc, char *argv[], hifiasm_opt_t* asm_opt)
             asm_opt->rl_cut = atol(opt.arg);
         } else if (c == 365) {
             asm_opt->sc_cut = atol(opt.arg);
+        } else if (c == 366) {
+            asm_opt->ref_fasta = opt.arg;
+        } else if (c == 367) {
+            asm_opt->unitig_map = opt.arg;
         } else if (c == 'l') {   ///0: disable purge_dup; 1: purge containment; 2: purge overlap
             asm_opt->purge_level_primary = asm_opt->purge_level_trio = atoi(opt.arg);
         }

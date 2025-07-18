@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <zlib.h>
 #include "Assembly.h"
+#include "ref_genome.h"
 #include "Process_Read.h"
 #include "CommandLines.h"
 #include "Hash_Table.h"
@@ -2057,9 +2058,12 @@ int ha_assemble(void)
     // debug_mc_g_t(MC_NAME);
     // debug_mc_gg_t(MC_NAME, 0, 0);
     // quick_debug_phasing(MC_NAME);
-	extern void ha_extract_print_list(const All_reads *rs, int n_rounds, const char *o);
-	int r, hom_cov = -1, ovlp_loaded = 0; uint64_t tot_b, tot_e;
-	if (asm_opt.load_index_from_disk && load_all_data_from_disk(&R_INF.paf, &R_INF.reverse_paf, asm_opt.output_file_name)) {
+    extern void ha_extract_print_list(const All_reads *rs, int n_rounds, const char *o);
+    int r, hom_cov = -1, ovlp_loaded = 0; uint64_t tot_b, tot_e;
+#ifdef ENABLE_REF_GENOME_V4
+    if (asm_opt.ref_fasta) ref_genome_processing_pipeline(&asm_opt);
+#endif
+    if (asm_opt.load_index_from_disk && load_all_data_from_disk(&R_INF.paf, &R_INF.reverse_paf, asm_opt.output_file_name)) {
 		ovlp_loaded = 1;
 		fprintf(stderr, "[M::%s::%.3f*%.2f] ==> loaded corrected reads and overlaps from disk\n", __func__, yak_realtime(), yak_cpu_usage());
 		if (asm_opt.extract_list) {
@@ -2117,18 +2121,24 @@ int ha_assemble(void)
     if(ovlp_loaded == 2) ovlp_loaded = 0;
     ha_opt_update_cov_min(&asm_opt, asm_opt.hom_cov, MIN_N_CHAIN);
 
-    build_string_graph_without_clean(asm_opt.min_overlap_coverage, R_INF.paf, R_INF.reverse_paf, 
-        R_INF.total_reads, R_INF.read_length, asm_opt.min_overlap_Len, asm_opt.max_hang_Len, asm_opt.clean_round, 
+    build_string_graph_without_clean(asm_opt.min_overlap_coverage, R_INF.paf, R_INF.reverse_paf,
+        R_INF.total_reads, R_INF.read_length, asm_opt.min_overlap_Len, asm_opt.max_hang_Len, asm_opt.clean_round,
         asm_opt.gap_fuzz, asm_opt.min_drop_rate, asm_opt.max_drop_rate, asm_opt.output_file_name, asm_opt.large_pop_bubble_size, 0, !ovlp_loaded);
-	destory_All_reads(&R_INF);
-	return 0;
+    destory_All_reads(&R_INF);
+#ifdef ENABLE_REF_GENOME_V4
+    if (asm_opt.ref_fasta) cleanup_reference_genome_resources();
+#endif
+    return 0;
 }
 
 
 int ha_assemble_pair(void)
 {
-	extern void ha_extract_print_list(const All_reads *rs, int n_rounds, const char *o);
-	int r = 0, hom_cov = -1, ovlp_loaded = 0; memset((&R_INF), 0, sizeof(R_INF));
+        extern void ha_extract_print_list(const All_reads *rs, int n_rounds, const char *o);
+        int r = 0, hom_cov = -1, ovlp_loaded = 0; memset((&R_INF), 0, sizeof(R_INF));
+#ifdef ENABLE_REF_GENOME_V4
+        if (asm_opt.ref_fasta) ref_genome_processing_pipeline(&asm_opt);
+#endif
 
 	if (asm_opt.load_index_from_disk && load_all_data_from_disk(&R_INF.paf, &R_INF.reverse_paf, asm_opt.output_file_name)) {
 		ovlp_loaded = 1;
@@ -2186,6 +2196,9 @@ int ha_assemble_pair(void)
     build_string_graph_without_clean(asm_opt.min_overlap_coverage, R_INF.paf, R_INF.reverse_paf, 
         R_INF.total_reads, R_INF.read_length, asm_opt.min_overlap_Len, asm_opt.max_hang_Len, asm_opt.clean_round, 
         asm_opt.gap_fuzz, asm_opt.min_drop_rate, asm_opt.max_drop_rate, asm_opt.output_file_name, asm_opt.large_pop_bubble_size, 0, !ovlp_loaded);
-	destory_All_reads(&R_INF);
-	return 0;
+        destory_All_reads(&R_INF);
+#ifdef ENABLE_REF_GENOME_V4
+        if (asm_opt.ref_fasta) cleanup_reference_genome_resources();
+#endif
+        return 0;
 }

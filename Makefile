@@ -1,13 +1,19 @@
 CXX=		g++
 CC=			gcc
 CXXFLAGS=	-g -O3 -msse4.2 -mpopcnt -fomit-frame-pointer -Wall
+
+# Optional reference-guided workflow
+REF_GENOME ?= 0
+ifeq ($(REF_GENOME),1)
+CXXFLAGS += -DENABLE_REF_GENOME_V4
+endif
 CFLAGS=		$(CXXFLAGS)
 CPPFLAGS=
 INCLUDES=
 OBJS=		CommandLines.o Process_Read.o Assembly.o Hash_Table.o \
 			POA.o Correct.o Levenshtein_distance.o Overlaps.o Trio.o kthread.o Purge_Dups.o \
 			htab.o hist.o sketch.o anchor.o extract.o sys.o hic.o rcut.o horder.o ecovlp.o\
-			tovlp.o inter.o kalloc.o gfa_ut.o gchain_map.o
+                       tovlp.o inter.o kalloc.o gfa_ut.o gchain_map.o ref_genome.o
 EXE=		hifiasm
 LIBS=		-lz -lpthread -lm
 
@@ -81,3 +87,5 @@ inter.o: inter.h Process_Read.h
 kalloc.o: kalloc.h
 gfa_ut.o: Overlaps.h
 gchain_map.o: gchain_map.h
+ref_genome.o: ref_genome.h Process_Read.h
+

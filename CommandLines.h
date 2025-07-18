@@ -170,6 +170,10 @@ typedef struct {
     int64_t rl_cut;
     int64_t sc_cut;
 
+    /* reference-guided assembly */
+    char *ref_fasta;      /* path to reference FASTA */
+    char *unitig_map;     /* unitig mapping mode reference path */
+
 } hifiasm_opt_t;
 
 extern hifiasm_opt_t asm_opt;
