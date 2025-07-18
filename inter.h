@@ -132,5 +132,36 @@ void gen_contig_trans(const ug_opt_t *uopt, asg_t *sg, ma_ug_t *qry, scaf_res_t 
 void gen_contig_self(const ug_opt_t *uopt, asg_t *sg, ma_ug_t *db, scaf_res_t *db_sc, ma_ug_t *gfa, kv_u_trans_t *ta, uint64_t soff, bubble_type *bu, kv_u_trans_t *res, uint32_t is_exact);
 void order_contig_trans(kv_u_trans_t *in);
 void sort_uc_block_qe(uc_block_t* a, uint64_t a_n);
+// inter.h 文件末尾添加的完整代码块
 
+#ifdef ENABLE_REF_GENOME_V4
+
+// 参考基因组相关头文件（如果需要）
+#include "ref_genome.h"
+
+// 参考基因组Block标记宏
+#define REF_PIDX_MARKER     0xFFFFFFFF
+#define BLOCK_SET_REF(block) ((block)->pidx = REF_PIDX_MARKER)
+#define BLOCK_IS_REF(block)  ((block)->pidx == REF_PIDX_MARKER)
+#define BLOCK_CLEAR_REF(block) ((block)->pidx = (uint32_t)-1)
+
+// 函数声明
+const char* ensure_unitig_seq(ma_ug_t* ug, uint32_t uid);
+
+int overlap_to_uc_block_ref_mode(overlap_region_alloc *overlap_list,
+                                uint32_t query_unitig_id,
+                                uc_block_t **out_blocks,
+                                uint64_t *out_count);
+
+int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
+                                  const ul_idx_t *ref_index,
+                                  uc_block_t **out_blocks,
+                                  uint64_t *out_count,
+                                  const hifiasm_opt_t *opt);
+
+int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
+                                                      const ul_idx_t *ref_index,
+                                                      const hifiasm_opt_t *opt);
+
+#endif // ENABLE_REF_GENOME_V4
 #endif

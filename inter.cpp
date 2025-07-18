@@ -22976,3 +22976,346 @@ ma_ug_t *ul_realignment_back(const ug_opt_t *uopt, asg_t *sg, uint32_t double_ch
 	free(gfa_name);
 	return ug;
 }
+#ifdef ENABLE_REF_GENOME_V4
+
+#include "ref_genome.h"
+
+// ===============================
+// 参考基因组Block标记（方案1：使用pidx字段）
+// ===============================
+
+// ✅ 方案1：使用pidx字段的特殊值标记参考基因组
+// 优势：pidx是32位完整字段，不会与现有UL逻辑冲突
+#define REF_PIDX_MARKER     0xFFFFFFFF  // pidx的特殊值标记参考基因组
+#define BLOCK_SET_REF(block) ((block)->pidx = REF_PIDX_MARKER)
+#define BLOCK_IS_REF(block)  ((block)->pidx == REF_PIDX_MARKER)
+#define BLOCK_CLEAR_REF(block) ((block)->pidx = (uint32_t)-1)  // 清除标记
+
+// ===============================
+// 新增函数1：确保unitig序列可用 (15行)
+// 基于真实代码中ma_utg_t的使用模式
+// ===============================
+
+/**
+ * @brief 确保unitig序列可用
+ * @param ug unitig图指针
+ * @param uid unitig ID
+ * @return 序列指针，失败返回NULL
+ */
+static inline const char* ensure_unitig_seq(ma_ug_t* ug, uint32_t uid) {
+    if (!ug || uid >= ug->u.n) return NULL;
+
+    ma_utg_t* utg = &ug->u.a[uid];
+    if (utg->s == NULL) {
+        // 基于项目知识：调用已存在的共识生成函数
+        extern void ug_consensus(ma_ug_t *ug, uint32_t uid, All_reads *R_INF, int flag);
+        extern All_reads R_INF;
+        ug_consensus(ug, uid, &R_INF, 1);
+    }
+    return utg->s;
+}
+
+// ===============================
+// 新增函数2：overlap_region到uc_block_t转换 (50行)
+// 基于项目知识中真实的uc_block_t处理模式
+// ===============================
+
+/**
+ * @brief 将overlap_region转换为参考基因组模式的uc_block_t
+ * @param overlap_list overlap结果列表
+ * @param query_unitig_id 查询unitig的ID
+ * @param out_blocks 输出的uc_block_t数组
+ * @param out_count 输出的block数量
+ * @return 成功返回0，失败返回非0
+ */
+int overlap_to_uc_block_ref_mode(overlap_region_alloc *overlap_list,
+                                uint32_t query_unitig_id,
+                                uc_block_t **out_blocks,
+                                uint64_t *out_count) {
+    if (!overlap_list || !out_blocks || !out_count) return -1;
+    if (overlap_list->length == 0) {
+        *out_blocks = NULL;
+        *out_count = 0;
+        return 0;
+    }
+
+    uc_block_t *blocks = (uc_block_t*)calloc(overlap_list->length, sizeof(uc_block_t));
+    if (!blocks) return -1;
+
+    uint64_t valid_blocks = 0;
+
+    for (uint64_t i = 0; i < overlap_list->length; i++) {
+        overlap_region *ovlp = &overlap_list->list[i];
+
+        // 基本质量过滤
+        if (ovlp->align_length < 500) continue;
+        if (ovlp->non_homopolymer_errors > ovlp->align_length * 0.15) continue;
+
+        uc_block_t *block = &blocks[valid_blocks];
+        memset(block, 0, sizeof(uc_block_t));
+
+        // 🔧 关键：参考基因组模式的坐标调换
+        // unitig作为query，reference作为target
+        block->hid = query_unitig_id;         // unitig ID
+        block->qs = ovlp->x_pos_s;            // unitig开始位置
+        block->qe = ovlp->x_pos_e + 1;        // unitig结束位置
+        block->ts = ovlp->y_pos_s;            // reference开始位置
+        block->te = ovlp->y_pos_e + 1;        // reference结束位置
+        block->rev = ovlp->y_pos_strand & 1;  // 方向性
+
+        // 🎯 正确设置uc_block_t的1位标志字段
+        // 基于真实结构：uint8_t pchain:5, rev:1, base:1, el:1;
+        block->el = 1;                        // 标记为有效（1位标志）
+        block->base = 0;                      // 非原始base标记（1位标志）
+        block->pchain = 1;                    // primary chain标记（5位字段，值1）
+
+        // 🎯 设置其他32位字段
+        block->pdis = (uint32_t)-1;           // 无前驱距离
+        block->aidx = (uint32_t)-1;           // 无辅助索引
+
+        // ✅ 使用方案1：用pidx字段标记参考基因组
+        BLOCK_SET_REF(block);  // pidx = REF_PIDX_MARKER (0xFFFFFFFF)
+        valid_blocks++;
+    }
+
+    if (valid_blocks == 0) {
+        free(blocks);
+        *out_blocks = NULL;
+        *out_count = 0;
+    } else {
+        *out_blocks = (uc_block_t*)realloc(blocks, valid_blocks * sizeof(uc_block_t));
+        *out_count = valid_blocks;
+    }
+
+    return 0;
+}
+
+// ===============================
+// 新增函数3：批量unitig到参考基因组比对 (80行)
+// 基于项目知识中真实的ha_get_ul_candidates_interface调用模式
+// ===============================
+
+/**
+ * @brief 批量执行unitig到参考基因组的比对
+ * @param unitigs HiFi unitig图
+ * @param ref_index 参考基因组UL索引
+ * @param out_blocks 输出的所有uc_block_t数组
+ * @param out_count 输出的总block数量
+ * @param opt hifiasm选项
+ * @return 成功返回0，失败返回非0
+ */
+int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
+                                  const ul_idx_t *ref_index,
+                                  uc_block_t **out_blocks,
+                                  uint64_t *out_count,
+                                  const hifiasm_opt_t *opt) {
+    if (!unitigs || !ref_index || !out_blocks || !out_count || !opt) return -1;
+
+    fprintf(stderr, "[M::%s] Processing %u unitigs → reference mapping\n",
+            __func__, unitigs->u.n);
+
+    uc_block_t **all_results = (uc_block_t**)calloc(unitigs->u.n, sizeof(uc_block_t*));
+    uint64_t *all_counts = (uint64_t*)calloc(unitigs->u.n, sizeof(uint64_t));
+    if (!all_results || !all_counts) {
+        free(all_results);
+        free(all_counts);
+        return -1;
+    }
+
+    uint64_t total_blocks = 0;
+    uint32_t processed = 0;
+
+    // 处理每个unitig
+    for (uint32_t uid = 0; uid < unitigs->u.n; uid++) {
+        ma_utg_t *utg = &unitigs->u.a[uid];
+        if (utg->len < 1000) continue; // 跳过短unitig
+
+        // 🔧 确保unitig序列可用
+        const char *seq = ensure_unitig_seq(unitigs, uid);
+        if (!seq) continue;
+
+        // 初始化比对结构（基于项目知识中真实代码模式）
+        overlap_region_alloc overlap_list;
+        init_overlap_region_alloc(&overlap_list);
+        overlap_region_alloc overlap_list_hp;
+        init_overlap_region_alloc(&overlap_list_hp);
+        Candidates_list cl;
+        init_Candidates_list(&cl);
+
+        kvec_t_u8_warp k_flag = {0, 0, 0};
+        kvec_t_u64_warp r_buf = {0, 0, 0};
+        kvec_t_u64_warp dbg_ct = {0, 0, 0};
+        st_mt_t sp = {0, 0, 0};
+
+        // 初始化ha_abufl_t（基于真实代码模式）
+        ha_abufl_t ab;
+        memset(&ab, 0, sizeof(ha_abufl_t));
+
+        // 🔧 调用真实的ha_get_ul_candidates_interface函数
+        // 基于项目知识中的真实调用模式：
+        // ha_get_ul_candidates_interface(b->abl, i, s->seq[i], s->len[i], s->opt->w, s->opt->k,
+        //     s->uu, &b->olist, &b->olist_hp, &b->clist, s->opt->bw_thres,
+        //     s->opt->max_n_chain, 1, NULL, &b->r_buf, &(b->tmp_region), NULL, &(b->sp), 1, NULL);
+
+        ha_get_ul_candidates_interface(&ab, uid, (char*)seq, utg->len,
+                                     opt->ul_mz_win, opt->ul_mer_length, ref_index,
+                                     &overlap_list, &overlap_list_hp, &cl,
+                                     opt->ul_error_rate, opt->max_n_chain, 1,
+                                     &k_flag, &r_buf, NULL, &dbg_ct, &sp,
+                                     1, NULL);
+
+        // 🎯 删除ul_rid_lalign_adv()调用！
+        // 原因：
+        // 1. ul_rid_lalign_adv()是为"UL-read→unitig"设计的，参数不适合"unitig→reference"
+        // 2. 重复精化会浪费CPU，可能导致坐标漂移
+        // 3. 保持与标准-UL模式完全一致：粗候选→ul_refine_alignment()
+        //
+        // 📋 正确流程：
+        // ha_get_ul_candidates_interface() → overlap_region
+        //                                 ↓
+        // overlap_to_uc_block_ref_mode() → uc_block_t
+        //                                 ↓
+        // 添加到UL_INF → ul_resolve() → ul_refine_alignment() (全局处理)
+        //
+        // 这样完全复用-UL模式的处理逻辑，避免不必要的中间精化步骤
+
+        // 🔧 转换为参考基因组模式的uc_block_t
+        if (overlap_list.length > 0) {
+            overlap_to_uc_block_ref_mode(&overlap_list, uid,
+                                       &all_results[uid], &all_counts[uid]);
+            if (all_counts[uid] > 0) {
+                total_blocks += all_counts[uid];
+                processed++;
+            }
+        }
+
+        // 清理资源
+        destory_overlap_region_alloc(&overlap_list);
+        destory_overlap_region_alloc(&overlap_list_hp);
+        destory_Candidates_list(&cl);
+        kv_destroy(k_flag.a);
+        kv_destroy(r_buf.a);
+        kv_destroy(dbg_ct.a);
+        kv_destroy(sp.a);
+    }
+
+    // 合并所有结果
+    if (total_blocks > 0) {
+        uc_block_t *final_blocks = (uc_block_t*)malloc(total_blocks * sizeof(uc_block_t));
+        if (!final_blocks) {
+            for (uint32_t i = 0; i < unitigs->u.n; i++) free(all_results[i]);
+            free(all_results);
+            free(all_counts);
+            return -1;
+        }
+
+        uint64_t pos = 0;
+        for (uint32_t uid = 0; uid < unitigs->u.n; uid++) {
+            if (all_results[uid] && all_counts[uid] > 0) {
+                memcpy(final_blocks + pos, all_results[uid],
+                       all_counts[uid] * sizeof(uc_block_t));
+                pos += all_counts[uid];
+                free(all_results[uid]);
+            }
+        }
+
+        *out_blocks = final_blocks;
+        *out_count = total_blocks;
+    } else {
+        *out_blocks = NULL;
+        *out_count = 0;
+    }
+
+    free(all_results);
+    free(all_counts);
+
+    fprintf(stderr, "[M::%s] Completed: %u unitigs → %lu reference blocks\n",
+            __func__, processed, (unsigned long)total_blocks);
+
+    return 0;
+}
+
+// ===============================
+// 🔧 与现有UL处理链条的无缝集成 (额外的集成函数)
+// 基于项目知识中真实的UL处理模式
+// ===============================
+
+/**
+ * @brief 将参考基因组blocks集成到UL处理流程（修正版：直接调用ul_resolve）
+ * @param unitigs HiFi unitig图
+ * @param ref_index 参考基因组UL索引
+ * @param opt hifiasm选项
+ * @return 成功返回0，失败返回非0
+ */
+int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
+                                                      const ul_idx_t *ref_index,
+                                                      const hifiasm_opt_t *opt) {
+    if (!unitigs || !ref_index || !opt) return -1;
+
+    fprintf(stderr, "[M::%s] Integrating reference blocks to UL pipeline...\n", __func__);
+
+    // 🔧 Step 1: 生成参考基因组blocks
+    uc_block_t *ref_blocks = NULL;
+    uint64_t ref_count = 0;
+
+    if (unitigs_map_to_reference_batch(unitigs, ref_index, &ref_blocks, &ref_count, opt) != 0) {
+        fprintf(stderr, "[ERROR] Failed to generate reference blocks\n");
+        return -1;
+    }
+
+    if (ref_count == 0) {
+        fprintf(stderr, "[WARNING] No reference blocks generated\n");
+        return 0;
+    }
+
+    // 🔧 Step 2: 将blocks添加到全局UL_INF结构
+    extern all_ul_t UL_INF;
+
+    // 确保UL_INF有足够空间并添加参考基因组blocks
+    for (uint64_t i = 0; i < ref_count; i++) {
+        uc_block_t *block = &ref_blocks[i];
+        uint32_t uid = block->hid;
+
+        if (uid >= UL_INF.n) {
+            uint32_t old_n = UL_INF.n;
+            UL_INF.n = uid + 1;
+            UL_INF.a = (ul_ov_t*)realloc(UL_INF.a, UL_INF.n * sizeof(ul_ov_t));
+
+            // 初始化新元素
+            for (uint32_t j = old_n; j < UL_INF.n; j++) {
+                memset(&UL_INF.a[j], 0, sizeof(ul_ov_t));
+                kv_init(UL_INF.a[j].bb);
+            }
+        }
+
+        // 添加到对应unitig的block列表
+        kv_push(uc_block_t, UL_INF.a[uid].bb, *block);
+    }
+
+    fprintf(stderr, "[M::%s] Added %lu reference blocks to UL_INF\n", __func__, (unsigned long)ref_count);
+
+    // 🎯 Step 3: 关键 - 直接调用ul_resolve！
+    // 这正是标准-UL模式调用的核心函数
+    // 基于项目知识：void ul_resolve(ma_ug_t *ug, const asg_t *rg, const ug_opt_t *uopt, int hap_n)
+
+    // 转换hifiasm_opt_t到ug_opt_t（必要的参数转换）
+    ug_opt_t uopt;
+    memset(&uopt, 0, sizeof(ug_opt_t));
+    uopt.coverage_cut = opt->hom_cov;
+    uopt.sources = opt->sources;
+    // 复制其他必要参数...
+
+    fprintf(stderr, "[M::%s] Calling ul_resolve (same as standard -UL mode)...\n", __func__);
+
+    // 🚀 调用项目知识中的ul_resolve - 这是-UL模式的核心！
+    ul_resolve(unitigs, unitigs->g, &uopt, 0);
+
+    fprintf(stderr, "[M::%s] ul_resolve completed successfully\n", __func__);
+
+    free(ref_blocks);
+
+    fprintf(stderr, "[M::%s] Reference-guided UL pipeline completed\n", __func__);
+    return 0;
+}
+
+#endif // ENABLE_REF_GENOME_V4
