@@ -138,6 +138,7 @@ void sort_uc_block_qe(uc_block_t* a, uint64_t a_n);
 
 // 参考基因组相关头文件（如果需要）
 #include "ref_genome.h"
+#include "Hash_Table.h"
 
 // 参考基因组Block标记宏
 #define REF_PIDX_MARKER     0xFFFFFFFF

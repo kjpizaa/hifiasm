@@ -293,10 +293,9 @@ int ref_genome_create_summary(const ref_genome_t *ref, const char *output_file);
 #define REF_ERROR_OPTIMIZATION      -8
 
 #ifdef ENABLE_REF_GENOME_V4
-struct hifiasm_opt_t;
-struct ma_ug_t;
-void ref_genome_processing_pipeline(const struct hifiasm_opt_t *opt);
-int execute_reference_guided_assembly(struct ma_ug_t *ug, const struct hifiasm_opt_t *opt);
+extern ref_genome_t *global_ref_genome;
+int ref_genome_processing_pipeline(const hifiasm_opt_t *opt);
+int execute_reference_guided_assembly(ma_ug_t *ug, const hifiasm_opt_t *opt);
 void cleanup_reference_genome_resources(void);
 #endif
 
