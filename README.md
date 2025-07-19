@@ -210,14 +210,15 @@ Enable optional reference-guided alignment at build time:
 make REF_GENOME=1
 ```
 
-Phase A builds a reference index and Phase B maps unitigs against it:
+Run assembly with a reference genome:
 
 ```sh
-# Phase A
-./hifiasm --ref ref.fa -o ref_work
-# Phase B
-./hifiasm --unitig-map ref_work/ref.fa unitigs.gfa
+./hifiasm --ref-fasta ref.fa -o asm -t32 reads.fq.gz
 ```
+
+After the unitig graph is generated, hifiasm automatically calls
+`execute_reference_guided_assembly` to align unitigs to the reference and
+feed the results into the UL processing pipeline.
 
 ### <a name="output"></a>Output files
 

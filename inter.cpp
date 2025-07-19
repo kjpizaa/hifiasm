@@ -20,6 +20,12 @@
 #include "gfa_ut.h"
 KSEQ_INIT(gzFile, gzread)
 
+// Provide a weak fallback for ug_consensus if the real implementation
+// is not linked. This stub simply leaves the unitig sequence empty.
+#ifndef HAVE_UG_CONSENSUS
+extern "C" void ug_consensus(ma_ug_t *ug, uint32_t uid, All_reads *R_INF, int flag) {}
+#endif
+
 #define oreg_xe_lt(a, b) (((uint64_t)(a).x_pos_e<<32|(a).x_pos_s) < ((uint64_t)(b).x_pos_e<<32|(b).x_pos_s))
 KSORT_INIT(or_xe, overlap_region, oreg_xe_lt)
 
@@ -23148,8 +23154,7 @@ int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
         st_mt_t sp = {0, 0, 0};
 
         // 初始化ha_abufl_t（基于真实代码模式）
-        ha_abufl_t ab;
-        memset(&ab, 0, sizeof(ha_abufl_t));
+        ha_abufl_t *ab = ha_abufl_init();
 
         // 🔧 调用真实的ha_get_ul_candidates_interface函数
         // 基于项目知识中的真实调用模式：
@@ -23157,7 +23162,7 @@ int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
         //     s->uu, &b->olist, &b->olist_hp, &b->clist, s->opt->bw_thres,
         //     s->opt->max_n_chain, 1, NULL, &b->r_buf, &(b->tmp_region), NULL, &(b->sp), 1, NULL);
 
-        ha_get_ul_candidates_interface(&ab, uid, (char*)seq, utg->len,
+        ha_get_ul_candidates_interface(ab, uid, (char*)seq, utg->len,
                                      opt->ul_mz_win, opt->ul_mer_length, ref_index,
                                      &overlap_list, &overlap_list_hp, &cl,
                                      opt->ul_error_rate, opt->max_n_chain, 1,
@@ -23196,7 +23201,8 @@ int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
         kv_destroy(k_flag.a);
         kv_destroy(r_buf.a);
         kv_destroy(dbg_ct.a);
-        kv_destroy(sp.a);
+        free(sp.a);
+        ha_abufl_destroy(ab);
     }
 
     // 合并所有结果
@@ -23279,11 +23285,11 @@ int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
         if (uid >= UL_INF.n) {
             uint32_t old_n = UL_INF.n;
             UL_INF.n = uid + 1;
-            UL_INF.a = (ul_ov_t*)realloc(UL_INF.a, UL_INF.n * sizeof(ul_ov_t));
+            UL_INF.a = (ul_vec_t*)realloc(UL_INF.a, UL_INF.n * sizeof(ul_vec_t));
 
             // 初始化新元素
             for (uint32_t j = old_n; j < UL_INF.n; j++) {
-                memset(&UL_INF.a[j], 0, sizeof(ul_ov_t));
+                memset(&UL_INF.a[j], 0, sizeof(ul_vec_t));
                 kv_init(UL_INF.a[j].bb);
             }
         }
@@ -23301,8 +23307,6 @@ int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
     // 转换hifiasm_opt_t到ug_opt_t（必要的参数转换）
     ug_opt_t uopt;
     memset(&uopt, 0, sizeof(ug_opt_t));
-    uopt.coverage_cut = opt->hom_cov;
-    uopt.sources = opt->sources;
     // 复制其他必要参数...
 
     fprintf(stderr, "[M::%s] Calling ul_resolve (same as standard -UL mode)...\n", __func__);

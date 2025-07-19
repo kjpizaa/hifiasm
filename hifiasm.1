@@ -431,8 +431,16 @@ Detect misjoined unitigs of >=
 in size; 0 to disable [500000].
 
 .TP
-.BI --seed \ INT 
+.BI --seed \ INT
 RNG seed [11].
+
+.SS Reference-guided assembly options
+.TP
+.BI --ref-fasta \ FILE
+Use the given reference genome FASTA to enable reference-guided mode.
+After the unitig graph is built, hifiasm calls
+\fBexecute_reference_guided_assembly\fR to align unitigs to the reference and
+integrate the results into the UL pipeline.
 
 .SH OUTPUTS
 

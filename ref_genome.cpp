@@ -1271,36 +1271,6 @@ int ref_genome_create_summary(const ref_genome_t *ref, const char *output_file)
  */
 
 #ifdef ENABLE_REF_GENOME_V4
-static ref_genome_t *g_ref_genome = NULL;
-
-void ref_genome_processing_pipeline(const hifiasm_opt_t *opt)
-{
-    if (!opt || !opt->ref_fasta) return;
-    g_ref_genome = ref_genome_init();
-    if (!g_ref_genome) return;
-    ref_config_t cfg = ref_config_default();
-    if (ref_genome_load_fasta(g_ref_genome, opt->ref_fasta) != 0) return;
-    if (ref_genome_build_unified_sequence(g_ref_genome, &cfg) != 0) return;
-    if (ref_genome_convert_to_all_reads(g_ref_genome, &cfg) != 0) return;
-    if (ref_genome_build_ul_index(g_ref_genome) != 0) return;
-    prepare_reference_for_virtual_ont(g_ref_genome);
-}
-
-int execute_reference_guided_assembly(ma_ug_t *ug, const hifiasm_opt_t *opt)
-{
-    (void)opt;
-    if (!g_ref_genome || !ug) return -1;
-    /* placeholder for future integration */
-    ref_genome_print_stats(g_ref_genome);
-    return 0;
-}
-
-void cleanup_reference_genome_resources(void)
-{
-    if (g_ref_genome) {
-        ref_genome_destroy(g_ref_genome);
-        g_ref_genome = NULL;
-    }
-}
+ref_genome_t *global_ref_genome = NULL;
 #endif
 

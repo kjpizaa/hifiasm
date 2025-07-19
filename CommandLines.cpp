@@ -81,7 +81,7 @@ static ko_longopt_t long_options[] = {
     { "ul-m",     ko_required_argument, 363},
     { "rl-cut",     ko_required_argument, 364},
     { "sc-cut",     ko_required_argument, 365},
-    { "ref",     ko_required_argument, 366},
+    { "ref-fasta",     ko_required_argument, 366},
     { "unitig-map", ko_required_argument, 367},
     // { "path-round",     ko_required_argument, 348},
         { 0, 0, 0 }
@@ -237,7 +237,7 @@ void Print_H(hifiasm_opt_t* asm_opt)
     fprintf(stderr, "    --sc-cut     INT\n");
     fprintf(stderr, "                 filter out ONT simplex reads with a mean base quality score below <INT> [%ld]\n", asm_opt->sc_cut);
 
-    fprintf(stderr, "    --ref        FILE\n");
+    fprintf(stderr, "    --ref-fasta FILE\n");
     fprintf(stderr, "                 reference FASTA for guided assembly [none]\n");
     fprintf(stderr, "    --unitig-map FILE\n");
     fprintf(stderr, "                 map unitigs to reference; skip assembly steps\n");
