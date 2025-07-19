@@ -32,12 +32,6 @@ extern void gen_ug_opt_t(ug_opt_t *opt, ma_hit_t_alloc* sources,
                          bub_label_t* b_mask_t, telo_end_t *te);
 #endif
 
-// Provide a weak fallback for ug_consensus if the real implementation
-// is not linked. This stub simply leaves the unitig sequence empty.
-#ifndef HAVE_UG_CONSENSUS
-extern "C" void ug_consensus(ma_ug_t *ug, uint32_t uid, All_reads *R_INF, int flag) {}
-#endif
-
 #define oreg_xe_lt(a, b) (((uint64_t)(a).x_pos_e<<32|(a).x_pos_s) < ((uint64_t)(b).x_pos_e<<32|(b).x_pos_s))
 KSORT_INIT(or_xe, overlap_region, oreg_xe_lt)
 
@@ -23030,13 +23024,7 @@ const char* ensure_unitig_seq(ma_ug_t* ug, uint32_t uid) {
     if (!ug || uid >= ug->u.n) return NULL;
 
     ma_utg_t* utg = &ug->u.a[uid];
-    if (utg->s == NULL) {
-        // 基于项目知识：调用已存在的共识生成函数
-        extern void ug_consensus(ma_ug_t *ug, uint32_t uid, All_reads *R_INF, int flag);
-        extern All_reads R_INF;
-        ug_consensus(ug, uid, &R_INF, 1);
-    }
-    return utg->s;
+    return utg->s; // 序列应在生成unitig图时已填充
 }
 
 // ===============================
