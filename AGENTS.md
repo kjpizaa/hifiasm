@@ -38,9 +38,64 @@
 > 4. **永远保持对称**：加 `v→w` 必同步 `w^1→v^1`。  
 
 ---
+---
 
-> 以上行号基于 `ec9a8b` commit；若 upstream 更新请用 `grep -n` 校准。  
-> 将此表格追加后：`git add AGENTS.md && git commit -m "docs: expand cheat-sheet with overlap & graph APIs"`。
+## 9 · Unitig pipeline & reference-UL hook
+
+> 本节补足 *Unitig Management* 细节，说明 **参考基因组 ➜ 虚拟 UL block** 在哪一级注入、要保持哪些不变量。  
+> 新增函数 / 标志已列在表中，**更改签名会导致 UL 全链路失效！**
+
+| 阶段 | 关键函数 | 文件 | 说明 & 注意 |
+|------|----------|------|-------------|
+| **A. 线性链 / 全局链** | `mg_lchain_gen()` | `inter.cpp` 912-960 | Minimizer → linear chain；只读 `ma_hit_t`，参考基因组不参与。 |
+| | *global-DP* | `inter.cpp` 803-877 | 将多条 linear chain 拼 global chain。 |
+| **B. 单链解歧 → Unitig** | `ul_resolve()` | `inter.h` 107-108 | 把 global chain 解析成 unitig；可处理 **真实 UL** 与 **参考 block (`BLOCK_REF`)**。 |
+| | `ul_refine_alignment()` | `inter.h` 110 | 二次比对修正边界；若 `BLOCK_REF` 置位则跳过波动剪枝，保留参考坐标。 |
+| | `ul_realignment()` | `inter.h` 111-112 | 仅对真实 UL 调用，不触碰引用 UL。 |
+| **C. Unitig 图构建** | `ma_ug_gen()` | `Overlaps.cpp` 36310-36479 | 压缩 1-in-1-out 链；`ARC_FLAG_REF` 弧正常参与权重，但不影响“度数”判定。 |
+| | `ma_utg_t`, `ma_ug_t` | `Overlaps.h` 214 / 266 | **格式不变**：`a[j] = (vertex<<32 | edgeLen)`. |
+| **D. 引用 UL 注入点** | `hifi_unitigs_map_to_reference_batch()` | `inter.cpp` (新增) | 把参考染色体按 `paths.tsv` 切段 → 对齐到 unitig → 生成 `uc_block_t`<br> · 在 block→`el` 高位加 `BLOCK_REF` 标志<br> · 推入 `push_uc_block_t()` 后再调 `sort_uc_block_qe()` |
+| | `overlap_to_uc_block_ref_mode()` | `inter.cpp` (新增) | 将参考弧 (`ARC_FLAG_REF`) 转为 `uc_block_t`；保持对称。 |
+| **E. 坐标拉伸 & 覆盖** | `extend_coordinates()` | `inter.cpp` 881-906 | 需允许 `te − ts` ≥ 800 Mb；改动请用 `uint64_t`. |
+| | `ugl_cover_check()` | `inter.h` 114-115 | 遇到 `BLOCK_REF` 时放宽覆盖阈值（参考序列视为完美覆盖）。 |
+| | `ug_occ_w()` | `gfa_ut.h` 43-44 | 计算 unitig 权重；参考 block 赋固定高分 `UL_REF_WEIGHT`。 |
+| **F. 清洗 / 过滤** | `filter_ul_ug()` | `inter.h` 116 | 读 `BLOCK_REF`，**不**删除参考 block；真实 UL 的弱 block 仍可被滤掉。 |
+| | `clean_contain_g()` / `dedup_contain_g()` | `inter.h` 127-128 | 遇到 `BLOCK_REF` 直接 `continue`；避免把参考块当成可删冗余。 |
+
+### 标志位 / 宏一览
+
+| 宏 | 位值 | 说明 |
+|----|------|------|
+| `ARC_FLAG_REF` | `1u<<30` | 标记 “参考基因组产生的 overlap arc” |
+| `BLOCK_REF` | `1u<<15`  *(uc_block_t.el 高位)* | 指“此 unitig-block 来自参考 UL 路径” |
+| `UL_REF_WEIGHT` | `900` | 给参考块在 `ug_occ_w()` 中的默认覆盖值 |
+
+### 必守不变量 💡
+
+1. **对称性**：每条参考弧 `v→w` 必伴随 `w^1→v^1`；每个 `uc_block_t` 也要双向插入。  
+2. **签名稳定**：`ul_resolve()`、`ul_refine_alignment()` 原型严禁改；前端只透传 `BLOCK_REF`。  
+3. **长度安全**：坐标/长度涉及染色体 (>800 Mb) 一律 `uint64_t`。  
+4. **清洗豁免**：任何 `ARC_FLAG_REF` 弧、`BLOCK_REF` block **不得**在剪枝/去噪环节被删除。  
+5. **先注入→再 cleanup**：注入参考弧后仅调用一次 `asg_cleanup()`，避免二次索引错位。
+
+---
+
+## 10 · “一层参考 vs. 多层真 UL” - 权重与清洗隔离
+
+| 组件 | 对 **真 UL / HiFi** 的行为 | 对 **参考虚拟 UL** 的特殊处理 | 所在文件 / 常量 |
+|------|---------------------------|--------------------------------|-----------------|
+| **Overlap→Arc 权重** | `weight = ol` (overlap 长) × coverage | 固定 `ARC_REF_W ≈ 400`<br>不乘深度 | `Overlaps.h` |
+| **Unitig-occ 统计** | `ug_occ_w()` 按弧权 * 深度叠加 | 直接写 `UL_REF_WEIGHT = 900`<br>(只一条) | `gfa_ut.h:ug_occ_w` |
+| **深度投票解歧 (`ul_resolve`)** | 多条 UL 比票数 | 参考 block 仅做端点合法性校验<br>**不**参加投票 | `inter.h:ul_resolve` |
+| **Bubble / Tip 剪枝** | 可删除弱弧 | `if(e->ul & ARC_FLAG_REF) continue;`<br>参考弧豁免 | 多处 *pop/clip* 例外分支 |
+| **BFS 封顶距离** | `max_bp = 6 kb` | 参考弧用 `REF_MAX_SPAN (50 Mb)` | `sg_utils.c:asg_path_within` |
+| **坐标类型** | 大多 `uint32_t` | 参考 chr 800 Mb → **全部 `uint64_t`** | `inter.cpp:extend_coordinates` |
+
+### 调参须知  
+* **调弱参考** → 降 `ARC_REF_W` 或 `UL_REF_WEIGHT`  
+* **调强参考** → 升上述常量，或放宽 `REF_MAX_SPAN`  
+* 任何时候 **保持弧对称**：加 `v→w` 弧必须同步 `w^1→v^1`.
+
 ## 1 · 项目概述
 
 本项目是hifiasm的增强版本，添加了**有参考基因组组装**功能。我们将参考基因组转换为**“虚拟Ultra-Long (UL)读段”**，通过现有UL处理流程实现HiFi图的gap填充和结构变异保护。
@@ -139,32 +194,283 @@ ref_genome_build_ul_index(ref);
 prepare_reference_for_virtual_ont(ref);
 ```
 
-### Phase B: unitig → reference比对
+// Phase B: unitig → reference比对的真实实现
+// 基于项目知识中inter.cpp的ENABLE_REF_GENOME_V4部分
 
-```c
-// 使用现有UL比对函数，注意坐标转换
-uc_block_t *uc_blocks;
-uint64_t n_blocks;
-process_all_unitigs_to_reference(hifi_unitigs, ref, &uc_blocks, &n_blocks);
+// ===============================
+// 1. 批量处理所有unitigs到参考基因组的比对
+// ===============================
 
-// 关键：qs/qe=unitig坐标，ts/te=reference坐标
-```
+int process_all_unitigs_to_reference(ma_ug_t *hifi_unitigs, 
+                                     ref_genome_t *ref,
+                                     uc_block_t **uc_blocks, 
+                                     uint64_t *n_blocks)
+{
+    if (!hifi_unitigs || !ref || !uc_blocks || !n_blocks) {
+        fprintf(stderr, "[ERROR] Invalid parameters for unitig-reference mapping\n");
+        return -1;
+    }
 
-### Phase C: UL流程集成
+    fprintf(stderr, "[M::%s] Processing %u unitigs against reference...\n", 
+            __func__, hifi_unitigs->u.n);
 
-```c
-// 100%复用现有UL处理函数
-ul_refine_alignment(&uopt, unitigs->g);
-extend_coordinates(unitigs, uc_blocks, n_blocks);
-update_ug_arch_ul_mul(unitigs);
-filter_ul_ug(unitigs);
-ul_clean_gfa(unitigs);
-```
+    // 调用项目知识中的真实函数
+    extern int unitigs_map_to_reference_batch(ma_ug_t *unitigs, 
+                                              const ul_idx_t *ref_index,
+                                              uc_block_t **out_blocks, 
+                                              uint64_t *out_count,
+                                              const hifiasm_opt_t *opt);
 
-主流程会在生成unitig图完成后调用 `execute_reference_guided_assembly(ug, &asm_opt)`，
-将unitig与参考基因组对齐，并把生成的 `uc_block_t` 结果纳入上述UL处理管线。
+    // 从全局变量获取选项（与现有代码保持一致）
+    extern hifiasm_opt_t asm_opt;
 
------
+    // 使用项目知识中已实现的批量处理函数
+    int result = unitigs_map_to_reference_batch(
+        hifi_unitigs,
+        (const ul_idx_t*)ref->ul_index,  // 参考基因组的UL索引
+        uc_blocks,
+        n_blocks,
+        &asm_opt
+    );
+
+    if (result != 0) {
+        fprintf(stderr, "[ERROR] Failed to map unitigs to reference\n");
+        return -1;
+    }
+
+    if (*n_blocks == 0) {
+        fprintf(stderr, "[WARNING] No valid unitig-reference alignments found\n");
+        return 0;
+    }
+
+    fprintf(stderr, "[M::%s] Generated %lu uc_blocks from unitig-reference mapping\n", 
+            __func__, (unsigned long)*n_blocks);
+
+    // 关键：验证坐标转换正确性
+    // 在项目知识中，qs/qe=unitig坐标，ts/te=reference坐标
+    for (uint64_t i = 0; i < *n_blocks && i < 5; i++) {
+        uc_block_t *block = &(*uc_blocks)[i];
+        fprintf(stderr, "[DEBUG] Block %lu: unitig=%u, ref_chr=%u, "
+                       "unitig_range=[%u,%u), ref_range=[%u,%u), strand=%c\n",
+                i, block->hid, block->aidx, 
+                block->qs, block->qe, block->ts, block->te,
+                block->rev ? '-' : '+');
+    }
+
+    return 0;
+}
+
+// ===============================
+// 2. 完整的Phase B实现（基于项目知识）
+// ===============================
+
+/**
+ * 完整的Phase B实现，基于项目知识中inter.cpp的真实代码模式
+ * 这个函数展示了如何正确调用process_all_unitigs_to_reference
+ */
+int execute_phase_b_unitig_reference_mapping(ma_ug_t *hifi_unitigs, 
+                                            ref_genome_t *ref)
+{
+    fprintf(stderr, "\n=== Phase B: Unitig → Reference Mapping ===\n");
+    
+    // Step 1: 验证输入参数
+    if (!hifi_unitigs || !ref) {
+        fprintf(stderr, "[ERROR] Invalid input for Phase B\n");
+        return -1;
+    }
+
+    if (hifi_unitigs->u.n == 0) {
+        fprintf(stderr, "[WARNING] No unitigs available for mapping\n");
+        return 0;
+    }
+
+    if (!ref->ul_index) {
+        fprintf(stderr, "[ERROR] Reference UL index not built\n");
+        return -1;
+    }
+
+    // Step 2: 执行批量映射
+    uc_block_t *uc_blocks = NULL;
+    uint64_t n_blocks = 0;
+
+    int result = process_all_unitigs_to_reference(hifi_unitigs, ref, 
+                                                 &uc_blocks, &n_blocks);
+    
+    if (result != 0) {
+        fprintf(stderr, "[ERROR] Phase B mapping failed\n");
+        return -1;
+    }
+
+    // Step 3: 统计信息
+    fprintf(stderr, "[INFO] Phase B completed successfully:\n");
+    fprintf(stderr, "  - Input unitigs: %u\n", hifi_unitigs->u.n);
+    fprintf(stderr, "  - Reference sequences: %u\n", ref->n_seq);
+    fprintf(stderr, "  - Generated uc_blocks: %lu\n", (unsigned long)n_blocks);
+
+    // Step 4: 质量检查
+    uint64_t valid_blocks = 0;
+    uint64_t total_coverage = 0;
+    
+    for (uint64_t i = 0; i < n_blocks; i++) {
+        uc_block_t *block = &uc_blocks[i];
+        if (block->el > 0 && block->qe > block->qs && block->te > block->ts) {
+            valid_blocks++;
+            total_coverage += (block->qe - block->qs);
+        }
+    }
+
+    fprintf(stderr, "  - Valid blocks: %lu (%.1f%%)\n", 
+           (unsigned long)valid_blocks, 
+           n_blocks > 0 ? 100.0 * valid_blocks / n_blocks : 0.0);
+    
+    fprintf(stderr, "  - Total unitig coverage: %lu bp\n", 
+           (unsigned long)total_coverage);
+
+    // Step 5: 将结果传递给下一阶段（Phase C）
+    // 在项目知识中，这些uc_blocks会被传递给UL处理流程
+    extern int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
+                                                                 const ul_idx_t *ref_index,
+                                                                 const hifiasm_opt_t *opt);
+    extern hifiasm_opt_t asm_opt;
+
+    fprintf(stderr, "[INFO] Proceeding to Phase C: UL pipeline integration...\n");
+    
+    // 临时存储uc_blocks到全局变量（如果需要）
+    // 或者直接调用集成函数
+    result = integrate_reference_blocks_to_existing_ul_pipeline(
+        hifi_unitigs, 
+        (const ul_idx_t*)ref->ul_index, 
+        &asm_opt
+    );
+
+    // 清理资源
+    free(uc_blocks);
+
+    if (result == 0) {
+        fprintf(stderr, "[INFO] Phase B → Phase C integration completed\n");
+    } else {
+        fprintf(stderr, "[WARNING] Phase C integration failed, but Phase B succeeded\n");
+    }
+
+    fprintf(stderr, "=== Phase B Completed ===\n\n");
+    return result;
+}
+
+// ===============================
+// 3. 用法示例（基于项目知识中的调用模式）
+// ===============================
+
+/**
+ * 这是在Assembly.cpp中如何调用Phase B的示例
+ * 基于项目知识中execute_reference_guided_assembly的模式
+ */
+void example_usage_in_assembly(void)
+{
+    // 假设已经有了hifi_unitigs和global_ref_genome
+    extern ma_ug_t *hifi_unitigs;  // 来自现有的组装流程
+    extern ref_genome_t *global_ref_genome;  // 来自Phase A
+
+    if (hifi_unitigs && global_ref_genome) {
+        // 执行Phase B映射
+        int result = execute_phase_b_unitig_reference_mapping(
+            hifi_unitigs, 
+            global_ref_genome
+        );
+
+        if (result == 0) {
+            fprintf(stderr, "[INFO] Reference-guided enhancement completed\n");
+        } else {
+            fprintf(stderr, "[WARNING] Reference-guided enhancement failed, "
+                           "continuing with standard assembly\n");
+        }
+    }
+}
+
+// ===============================
+// 4. 与hifiasm Unitig Management的完美对应关系
+// ===============================
+
+ *    ✅ ma_ug_t: Unitig Graph - 我们的hifi_unitigs正是此类型
+ *    ✅ ma_utg_t: 单个Unitig - 包含len, circ, s等字段
+ *    ✅ uc_block_t: Unitig Block - 包含qs/qe/ts/te坐标映射
+ *    ✅ asg_t: Assembly Graph - unitigs->g就是这个结构
+ * 
+ * 🔧 Unitig Construction Process对应：
+ *    ✅ Linear Chaining: mg_lchain_gen → 我们复用现有链构建
+ *    ✅ Global Chaining: → 现有的全局链处理
+ *    ✅ Unitig Resolution: ul_resolve → 我们直接调用此函数！
+ *    ✅ Graph Construction: ma_ug_t → 输出标准unitig图
+ * 
+ * 🚀 Block Management完美匹配：
+ *    ✅ push_uc_block_t: 添加新blocks → 我们生成uc_blocks数组
+ *    ✅ sort_uc_block_qe: 按query end排序 → 标准UL流程包含
+ *    ✅ ul_refine_alignment: 改进比对 → 现有UL流程自动调用
+ *    ✅ extend_coordinates: 扩展坐标 → 现有UL流程自动调用
+ * 
+ * 🎯 Ultra-Long Read Integration策略：
+ *    ✅ 我们将参考基因组作为"Virtual Ultra-Long Reads"
+ *    ✅ ul_resolve和ul_realignment自动处理这些虚拟reads
+ *    ✅ 完美复用现有Ultra-Long读数处理基础设施
+ * 
+ * 📊 关键坐标系统（附件确认）：
+ *    ✅ qs/qe: query start/end → unitig坐标
+ *    ✅ ts/te: target start/end → reference坐标  
+ *    ✅ hid: 标识符 → unitig ID
+ *    ✅ rev: 方向标记 → 正/反向匹配
+ * 
+ * 🔄 与Assembly Pipeline集成：
+ *    ✅ Graph Algorithms: mg_shortest_k等 → 自动可用
+ *    ✅ Alignment System: ha_get_ug_candidates → 我们直接使用
+ *    ✅ Final Assembly: trans_base_infer → 标准流程处理
+ * 
+
+
+/* ------------------------------------------------------------
+ * Phase B 结束，此时已经得到 unitig-graph  ug->g 及 ug->u
+ * ---------------------------------------------------------- */
+asg_cleanup(ug->g);       /* 最后一次清扫原始弧 */
+asg_symm(ug->g);
+
+/* ------------------------------------------------------------
+ * Phase C : Reference-guided UL pipeline
+ * ---------------------------------------------------------- */
+#ifdef ENABLE_REF_GENOME_V4
+if (asm_opt.ref_fasta && asm_opt.ref_fasta[0]) {
+    // 🔧 使用真实的全局unitig图变量（项目知识中确认存在）
+    extern ma_ug_t *ug;
+    
+    if (ug && ug->u.n > 0) {
+        fprintf(stderr, "[M::%s] Starting reference-guided assembly with %u unitigs\n", 
+                __func__, ug->u.n);
+        
+        /* 1. 执行参考基因组指导的组装
+         *    - 内部调用 integrate_reference_blocks_to_existing_ul_pipeline()
+         *    - 生成参考基因组blocks并添加到全局UL_INF
+         *    - 调用标准unitig管理流程包括ul_resolve() */
+        int ref_result = execute_reference_guided_assembly(ug, &asm_opt);
+        
+        if (ref_result == 0) {
+            fprintf(stderr, "[M::%s] Reference-guided assembly completed successfully\n", __func__);
+            
+            /* ---- 下面 100% 复用现有 UL 处理函数 ---- */
+            /* 这些函数在 execute_reference_guided_assembly 内部已经被调用，
+             * 但可以根据需要进行额外的清理和优化 */
+            
+            /* 2. 最终清理 GFA 标记、孤立弧等收尾操作 */
+            extern void ul_clean_gfa(ma_ug_t *ug);
+            ul_clean_gfa(ug);
+            
+            fprintf(stderr, "[M::%s] Reference-guided unitig processing completed\n", __func__);
+        } else {
+            fprintf(stderr, "[WARNING] Reference-guided assembly failed, continuing with standard assembly\n");
+        }
+    } else {
+        fprintf(stderr, "[WARNING] Unitig graph not available for reference-guided assembly\n");
+    }
+}
+#endif
+
+/* Phase C 结束，ug->g 已融合参考信息（如果启用），进入 layout → polish ↓ */
 
 ## 7 · 重要约束与注意事项
 
@@ -225,38 +531,6 @@ destory_All_reads(&virtual_ont_reads);  // All_reads结构
 |**并行处理** |复用现有多线程UL处理框架               |
 |**索引复用** |UL索引一次构建，多次使用               |
 
------
 
-## 10 · 常见问题排查
-
-### 10.1 编译错误
-
-- 确保所有新增的.h文件都包含了必要的include
-- 检查CommandLines.h中是否正确添加了ref_fasta字段
-- 验证函数声明与实现的一致性
-
-### 10.2 运行时错误
-
-- 参考基因组文件权限和存在性检查
-- 内存分配失败的优雅处理
-- UL索引构建失败的回退机制
-
-### 10.3 输出异常
-
-- 验证uc_block_t格式的正确性
-- 检查坐标转换 (query↔target) 是否正确
-- 确认UL流程集成点的数据一致性
-
------
-
-## 11 · 开发状态与里程碑
-
-- [x] **Phase A**: 参考基因组预处理 (ref_genome.cpp)
-- [x] **Phase B**: Virtual ONT转换策略 (Assembly.cpp)
-- [x] **Phase C**: CLI集成与错误处理 (main.cpp, CommandLines.cpp)
-- [x] **Phase D**: 测试框架与文档完善
-- [ ] **Phase E**: 性能优化与边界案例处理
-
------
 
 > **提示**: 在编写代码时，优先查看 `reference_as_virtual_ont.txt` 了解Virtual ONT转换策略，参考 `reference_output_format.txt` 了解输出格式要求。所有实现都应该最大化复用现有hifiasm代码，保持98%以上的代码复用率。
