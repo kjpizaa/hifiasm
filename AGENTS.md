@@ -4,7 +4,43 @@
 > **人类开发者:** 详细设计文档请参考 `docs/ref_guided_assembly_design.md`
 
 -----
+## 8 · Quick-API cheat-sheet (Keep these stable!)
 
+| 分类 | 核心函数 / 结构 | 所在文件 (commit ec9a8b) | 你改动时要注意 |
+|------|----------------|-------------------------|----------------|
+| **参考弧注入** | `load_paths_and_inject(asg_t *g, const char *tsv, int64_t span_bp, int check_hifi)` | `src/ref_arc.c` | 解析 `paths.tsv` → 对称地加 `ARC_FLAG_REF` 弧；**勿在此调用 `asg_cleanup()`** |
+| | `asg_path_within(const asg_t *g, uint32_t v0, uint32_t v1, int64_t max_bp, int max_step)` | `src/sg_utils.c` | 小 BFS 判 HiFi≤6 kb 是否已连通；忽略 `ARC_FLAG_REF` |
+| | `ARC_FLAG_REF` (`1u<<30`)、`ARC_REF_W` (默认 400) | `Overlaps.h` | 高位标志唯一；权重越大参考弧越少被剪 |
+| **Overlap → String-graph** | `ma_hit2arc()` | `Overlaps.h` §366-442 / `Overlaps.cpp` 896-972 | 把 `ma_hit_t` 转换成对称弧；保持 rev/方向一致性 |
+| | `normalize_ma_hit_t_single_side_advance[_mult]` | `Overlaps.cpp` 1139-1586 | 确保 A↔B 都有 overlap；别误删 `rev` 位 |
+| | `ma_hit_contained_advance` | `Overlaps.cpp` 1782-1862 | contained read 处理；参考弧对 contained 逻辑无影响 |
+| | `ma_hit_flt` | `Overlaps.cpp` 1865-1922 | 改阈值时同步更新 `--ref-path` 教程中的示例 |
+| **基础 graph 清洗** | `asg_arc_del_multi` | `Overlaps.cpp` 980-1005 | 保留最长弧；**切勿删除 `ARC_FLAG_REF`** |
+| | `asg_arc_del_asymm` | `Overlaps.cpp` 1007-1035 | 保证弧对称；同上 |
+| | `asg_cleanup()` | 多处调用 | 注入参考弧后仅需调用一次 |
+| **高级 graph 算法** | `asg_bub_pop1_primary_trio`, `asg_pop_bubble_primary_trio` | `Overlaps.cpp` 7963-8146 / 11054-11200 | 泡 >50 kb 时**不要**自动替换为参考弧路径 |
+| | `check_tip`, `asg_arc_del_simple_circle_untig` | `Overlaps.cpp` 3215-3290 / 3163-3214 | 在删除 tip 时：`if(e->ul & ARC_FLAG_REF) continue;` |
+| | `resolve_tangles` | `Overlaps.cpp` 11546-11725 | 参考弧参与评分，但不能压倒 HiFi 证据 |
+| **Unitig 生成 / 遍历** | `ma_ug_gen()` | `Overlaps.cpp` 36310-36479 | 压缩 1-进-1-出链；`ARC_FLAG_REF` 只影响弧权，不改链判定 |
+| | `ma_utg_t` / `ma_ug_t` | `Overlaps.h` 214, 266-271 | `a[j] = (vertex<<32 | edgeLen)` 格式不能破 |
+| **UL 复用管线** | `hifi_unitigs_map_to_reference()` | `inter.cpp` (新增) | 把参考染色体当 “虚拟 UL”；产生 `uc_block_t` 带 `BLOCK_REF` |
+| | `ul_resolve()` / `ul_refine_alignment()` | `inter.cpp` 881-960 等 | 签名别改；只读 `BLOCK_REF` |
+| | `extend_coordinates()` | `inter.cpp` 912-960 | 需支持 800 Mb 染色体坐标，避免 `uint32_t` 溢出 |
+| **Overlap 检测内部结构** | `ma_hit_t` / `ma_hit_t_alloc` | `Overlaps.h` 40-45 / 116-132 | `el==1` 精确；`del` 删边标记；参考弧注入不触碰这些 |
+| | `overlap_region`、`window_list` | `Hash_Table.h` 39-106 / 160-189 | 调 k-mer 长度时同步修改测试脚本 |
+| **性能 / 调试** | `radix_sort_arch64` | `Overlaps.cpp` 24-45 | 新字段别破 64-bit 键格式 `(weight<<32|id)` |
+| | `fprintf(stderr,"[REF-ARC] ...")` 宏 | `src/ref_arc.c` | 标准 debug tag，方便 grep |
+
+> **速用指南**  
+> 1. **加功能**：先查上表看副作用；保证弧对称、标志位唯一。  
+> 2. **调参数**：改 `ARC_REF_W`、BFS 距离、泡阈值后跑 `tests/chr22_mini`。  
+> 3. **打 debug**：请用 `[REF-ARC]` / `[GRAPH]` 前缀。  
+> 4. **永远保持对称**：加 `v→w` 必同步 `w^1→v^1`。  
+
+---
+
+> 以上行号基于 `ec9a8b` commit；若 upstream 更新请用 `grep -n` 校准。  
+> 将此表格追加后：`git add AGENTS.md && git commit -m "docs: expand cheat-sheet with overlap & graph APIs"`。
 ## 1 · 项目概述
 
 本项目是hifiasm的增强版本，添加了**有参考基因组组装**功能。我们将参考基因组转换为**“虚拟Ultra-Long (UL)读段”**，通过现有UL处理流程实现HiFi图的gap填充和结构变异保护。
