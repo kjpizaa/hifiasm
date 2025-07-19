@@ -22,6 +22,14 @@ KSEQ_INIT(gzFile, gzread)
 
 #ifdef ENABLE_REF_GENOME_V4
 ma_ug_t *ug = NULL; // global unitig graph for reference-guided pipeline
+extern void gen_ug_opt_t(ug_opt_t *opt, ma_hit_t_alloc* sources,
+                         ma_hit_t_alloc* reverse_sources, int64_t max_hang,
+                         int64_t min_ovlp, int64_t gap_fuzz, int64_t min_dp,
+                         uint64_t* readLen, ma_sub_t *coverage_cut,
+                         R_to_U* ruIndex, long long tipsLen,
+                         float tip_drop_ratio, long long stops_threshold,
+                         float chimeric_rate, float drop_ratio,
+                         bub_label_t* b_mask_t, telo_end_t *te);
 #endif
 
 // Provide a weak fallback for ug_consensus if the real implementation
@@ -23127,7 +23135,7 @@ int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
                                   const hifiasm_opt_t *opt) {
     if (!unitigs || !ref_index || !out_blocks || !out_count || !opt) return -1;
 
-    fprintf(stderr, "[M::%s] Processing %u unitigs → reference mapping\n",
+    fprintf(stderr, "[M::%s] Processing %zu unitigs → reference mapping\n",
             __func__, unitigs->u.n);
 
     uc_block_t **all_results = (uc_block_t**)calloc(unitigs->u.n, sizeof(uc_block_t*));
