@@ -125,6 +125,9 @@ filter_ul_ug(unitigs);
 ul_clean_gfa(unitigs);
 ```
 
+主流程会在生成unitig图完成后调用 `execute_reference_guided_assembly(ug, &asm_opt)`，
+将unitig与参考基因组对齐，并把生成的 `uc_block_t` 结果纳入上述UL处理管线。
+
 -----
 
 ## 7 · 重要约束与注意事项

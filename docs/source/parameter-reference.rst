@@ -296,3 +296,14 @@ Hi-C integration options
 
 **\-\-l-msjoin <INT=500000>**
   Detect misjoined unitigs of ``>=INT`` in size; 0 to disable.
+
+Reference-guided assembly options
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. _ref_fasta_opt:
+
+**--ref-fasta <FILE>**
+  Specify a reference genome FASTA to enable reference-guided assembly.
+  After the unitig graph is built, hifiasm invokes
+  ``execute_reference_guided_assembly`` to align unitigs to the reference and
+  integrate the resulting blocks into the existing UL pipeline.
