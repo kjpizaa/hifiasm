@@ -173,6 +173,33 @@ typedef struct {
 } ref_config_t;
 ```
 
+### 5.3 内置核心结构速查表 (asg_t / ma_ug_t / uc_block_t)
+
+> 以下结构在 `inter.cpp`、`Overlaps.h` 等文件中频繁出现，理解它们有助于修改参考引导
+> 管线。表格基于 `ec9a8b` 版本，字段布局**不得改变**。
+
+| 结构 | 关键字段 | 说明 |
+|-----|---------|------|
+|`asg_t`|`n_seq`, `n_arc`, `arc[]`|原始overlap图，弧的高位可带`ARC_FLAG_REF`|
+|`ma_utg_t`|`len`, `circ`, `start`, `end`, `a[]`, `char *s`|单条unitig及其共识序列；`s==NULL`时需调用共识生成函数|
+|`ma_ug_t`|`u[]`, `asg_t *g`|压缩后的unitig图结构|
+|`uc_block_t`|`hid`, `rev`, `qs/qe`, `ts/te`, `pidx`|unitig到参考的块映射，参考块要求`pidx=0xFFFFFFFF`|
+|`ul_idx_t`|`ug`, `ct`/`cc`/`cr`, `r_ug`|Ultra-Long索引，可同时处理真实UL和参考块|
+
+```c
+// 访问unitig序列的推荐方式
+static inline const char *get_utg_seq(ma_ug_t *ug, uint32_t uid) {
+    if (uid >= ug->u.n) return NULL;
+    ma_utg_t *u = &ug->u.a[uid];
+    if (!u->s) ug_consensus_one(ug, uid); // 不会产生副作用
+    return u->s;
+}
+```
+
+在 `ENABLE_REF_GENOME_V4` 模式下，项目提供全局指针 `ma_ug_t *ug`（定义于
+`inter.cpp`），用于在构建完unitig图后在各模块间共享。调用参考管线时需确保该指针已
+赋值且 `ug->u.n > 0`。
+
 -----
 
 ## 6 · 关键处理流程
