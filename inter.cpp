@@ -23313,6 +23313,7 @@ int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
     ul_resolve(unitigs, unitigs->g, &uopt, 0);
     sort_uc_block_qe(ref_blocks, ref_count);
     ul_refine_alignment(&uopt, unitigs->g);
+    extend_coordinates(unitigs);
     gen_ul_vec_rid_t(&UL_INF, NULL, unitigs);
     update_ug_arch_ul_mul(unitigs);
     filter_ul_ug(unitigs);
