@@ -22999,11 +22999,11 @@ ma_ug_t *ul_realignment_back(const ug_opt_t *uopt, asg_t *sg, uint32_t double_ch
 #include "ref_genome.h"
 
 // ===============================
-// 参考基因组Block标记：利用 el 位标记参考块
-// el==1 表示该 block 来自参考基因组
-#define BLOCK_SET_REF(block)   ((block)->el = 1)
-#define BLOCK_IS_REF(block)    ((block)->el != 0)
-#define BLOCK_CLEAR_REF(block) ((block)->el = 0)
+// 参考基因组Block标记：利用 el 高位标记参考块
+#define BLOCK_REF             (1u<<15)
+#define BLOCK_SET_REF(block)   ((block)->el |= BLOCK_REF)
+#define BLOCK_IS_REF(block)    ((block)->el & BLOCK_REF)
+#define BLOCK_CLEAR_REF(block) ((block)->el &= ~BLOCK_REF)
 
 // ===============================
 // 新增函数1：确保unitig序列可用 (15行)

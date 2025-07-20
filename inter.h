@@ -140,10 +140,11 @@ void sort_uc_block_qe(uc_block_t* a, uint64_t a_n);
 #include "ref_genome.h"
 #include "Hash_Table.h"
 
-// 参考基因组Block标记宏
-#define BLOCK_SET_REF(block)   ((block)->el = 1)
-#define BLOCK_IS_REF(block)    ((block)->el != 0)
-#define BLOCK_CLEAR_REF(block) ((block)->el = 0)
+// 参考基因组Block标记宏 (uc_block_t.el 高位)
+#define BLOCK_REF             (1u<<15)
+#define BLOCK_SET_REF(block)   ((block)->el |= BLOCK_REF)
+#define BLOCK_IS_REF(block)    ((block)->el & BLOCK_REF)
+#define BLOCK_CLEAR_REF(block) ((block)->el &= ~BLOCK_REF)
 
 extern ma_ug_t *ug; /* global unitig graph for reference-guided pipeline */
 
