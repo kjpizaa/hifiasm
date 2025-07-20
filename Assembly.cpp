@@ -3,7 +3,6 @@
 #include <assert.h>
 #include <zlib.h>
 #include "Assembly.h"
-#include "ref_genome.h"
 #include "Process_Read.h"
 #include "CommandLines.h"
 #include "Hash_Table.h"
@@ -26,92 +25,6 @@ Debug_reads R_INF_FLAG;
 all_ul_t UL_INF, ULG_INF;
 uint32_t *het_cnt = NULL;
 // uint32_t debug_out = 0;
-
-#ifdef ENABLE_REF_GENOME_V4
-extern ref_genome_t *global_ref_genome;
-
-int ref_genome_processing_pipeline(const hifiasm_opt_t *opt)
-{
-    if (!opt || !opt->ref_fasta || !opt->ref_fasta[0]) {
-        return -1;
-    }
-
-    fprintf(stderr, "\n=== Reference-Guided Assembly Mode ===\n");
-    fprintf(stderr, "[INFO] Reference file: %s\n", opt->ref_fasta);
-
-    ref_genome_t *ref = ref_genome_init();
-    if (!ref) {
-        fprintf(stderr, "[ERROR] Failed to initialize reference genome\n");
-        return -1;
-    }
-
-    if (ref_genome_load_fasta(ref, opt->ref_fasta) != 0) {
-        fprintf(stderr, "[ERROR] Failed to load reference FASTA\n");
-        ref_genome_destroy(ref);
-        return -1;
-    }
-
-    ref_config_t config = ref_config_default();
-    if (ref_genome_build_unified_sequence(ref, &config) != 0 ||
-        ref_genome_convert_to_all_reads(ref, &config) != 0) {
-        fprintf(stderr, "[ERROR] Failed to process reference sequences\n");
-        ref_genome_destroy(ref);
-        return -1;
-    }
-
-    if (ref_genome_build_ul_index(ref) != 0) {
-        fprintf(stderr, "[ERROR] Failed to build UL index\n");
-        ref_genome_destroy(ref);
-        return -1;
-    }
-
-    if (prepare_reference_for_virtual_ont(ref) != 0) {
-        fprintf(stderr, "[ERROR] Failed to prepare virtual ONT data\n");
-        ref_genome_destroy(ref);
-        return -1;
-    }
-
-    global_ref_genome = ref;
-
-    ref_genome_print_stats(ref);
-    fprintf(stderr, "[INFO] Reference genome processing completed\n");
-    return 0;
-}
-
-int execute_reference_guided_assembly(ma_ug_t *ug, const hifiasm_opt_t *opt)
-{
-    if (!global_ref_genome || !ug || !opt) {
-        fprintf(stderr, "[WARNING] Reference genome or unitig graph not available\n");
-        return -1;
-    }
-
-    fprintf(stderr, "\n=== Executing Reference-Guided Assembly ===\n");
-    fprintf(stderr, "[INFO] Processing %zu unitigs against reference\n", (size_t)ug->u.n);
-
-    extern int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
-                                                                 const ul_idx_t *ref_index,
-                                                                 const hifiasm_opt_t *opt);
-
-    int result = integrate_reference_blocks_to_existing_ul_pipeline(
-        ug, (const ul_idx_t*)global_ref_genome->ul_index, opt);
-
-    if (result == 0) {
-        fprintf(stderr, "[INFO] Reference-guided assembly completed successfully\n");
-    } else {
-        fprintf(stderr, "[WARNING] Reference-guided assembly failed, continuing with standard assembly\n");
-    }
-
-    return result;
-}
-
-void cleanup_reference_genome_resources(void)
-{
-    if (global_ref_genome) {
-        ref_genome_destroy(global_ref_genome);
-        global_ref_genome = NULL;
-    }
-}
-#endif // ENABLE_REF_GENOME_V4
 
 void get_corrected_read_from_cigar(Cigar_record* cigar, char* pre_read, int pre_length, char* new_read, int* new_length)
 {
@@ -2144,16 +2057,9 @@ int ha_assemble(void)
     // debug_mc_g_t(MC_NAME);
     // debug_mc_gg_t(MC_NAME, 0, 0);
     // quick_debug_phasing(MC_NAME);
-    extern void ha_extract_print_list(const All_reads *rs, int n_rounds, const char *o);
-    int r, hom_cov = -1, ovlp_loaded = 0; uint64_t tot_b, tot_e;
-#ifdef ENABLE_REF_GENOME_V4
-    if (asm_opt.ref_fasta && asm_opt.ref_fasta[0]) {
-        if (ref_genome_processing_pipeline(&asm_opt) != 0) {
-            fprintf(stderr, "[WARNING] Reference genome processing failed, continuing with standard assembly\n");
-        }
-    }
-#endif
-    if (asm_opt.load_index_from_disk && load_all_data_from_disk(&R_INF.paf, &R_INF.reverse_paf, asm_opt.output_file_name)) {
+	extern void ha_extract_print_list(const All_reads *rs, int n_rounds, const char *o);
+	int r, hom_cov = -1, ovlp_loaded = 0; uint64_t tot_b, tot_e;
+	if (asm_opt.load_index_from_disk && load_all_data_from_disk(&R_INF.paf, &R_INF.reverse_paf, asm_opt.output_file_name)) {
 		ovlp_loaded = 1;
 		fprintf(stderr, "[M::%s::%.3f*%.2f] ==> loaded corrected reads and overlaps from disk\n", __func__, yak_realtime(), yak_cpu_usage());
 		if (asm_opt.extract_list) {
@@ -2211,34 +2117,18 @@ int ha_assemble(void)
     if(ovlp_loaded == 2) ovlp_loaded = 0;
     ha_opt_update_cov_min(&asm_opt, asm_opt.hom_cov, MIN_N_CHAIN);
 
-    build_string_graph_without_clean(asm_opt.min_overlap_coverage, R_INF.paf, R_INF.reverse_paf,
-        R_INF.total_reads, R_INF.read_length, asm_opt.min_overlap_Len, asm_opt.max_hang_Len, asm_opt.clean_round,
+    build_string_graph_without_clean(asm_opt.min_overlap_coverage, R_INF.paf, R_INF.reverse_paf, 
+        R_INF.total_reads, R_INF.read_length, asm_opt.min_overlap_Len, asm_opt.max_hang_Len, asm_opt.clean_round, 
         asm_opt.gap_fuzz, asm_opt.min_drop_rate, asm_opt.max_drop_rate, asm_opt.output_file_name, asm_opt.large_pop_bubble_size, 0, !ovlp_loaded);
-#ifdef ENABLE_REF_GENOME_V4
-    if (asm_opt.ref_fasta && asm_opt.ref_fasta[0]) {
-        extern ma_ug_t *ug;
-        if (ug && ug->u.n > 0) {
-            execute_reference_guided_assembly(ug, &asm_opt);
-        }
-        cleanup_reference_genome_resources();
-    }
-#endif
-    destory_All_reads(&R_INF);
-    return 0;
+	destory_All_reads(&R_INF);
+	return 0;
 }
 
 
 int ha_assemble_pair(void)
 {
-        extern void ha_extract_print_list(const All_reads *rs, int n_rounds, const char *o);
-        int r = 0, hom_cov = -1, ovlp_loaded = 0; memset((&R_INF), 0, sizeof(R_INF));
-#ifdef ENABLE_REF_GENOME_V4
-        if (asm_opt.ref_fasta && asm_opt.ref_fasta[0]) {
-            if (ref_genome_processing_pipeline(&asm_opt) != 0) {
-                fprintf(stderr, "[WARNING] Reference genome processing failed, continuing with standard assembly\n");
-            }
-        }
-#endif
+	extern void ha_extract_print_list(const All_reads *rs, int n_rounds, const char *o);
+	int r = 0, hom_cov = -1, ovlp_loaded = 0; memset((&R_INF), 0, sizeof(R_INF));
 
 	if (asm_opt.load_index_from_disk && load_all_data_from_disk(&R_INF.paf, &R_INF.reverse_paf, asm_opt.output_file_name)) {
 		ovlp_loaded = 1;
@@ -2296,15 +2186,6 @@ int ha_assemble_pair(void)
     build_string_graph_without_clean(asm_opt.min_overlap_coverage, R_INF.paf, R_INF.reverse_paf, 
         R_INF.total_reads, R_INF.read_length, asm_opt.min_overlap_Len, asm_opt.max_hang_Len, asm_opt.clean_round, 
         asm_opt.gap_fuzz, asm_opt.min_drop_rate, asm_opt.max_drop_rate, asm_opt.output_file_name, asm_opt.large_pop_bubble_size, 0, !ovlp_loaded);
-#ifdef ENABLE_REF_GENOME_V4
-        if (asm_opt.ref_fasta && asm_opt.ref_fasta[0]) {
-            extern ma_ug_t *ug;
-            if (ug && ug->u.n > 0) {
-                execute_reference_guided_assembly(ug, &asm_opt);
-            }
-            cleanup_reference_genome_resources();
-        }
-#endif
-        destory_All_reads(&R_INF);
-        return 0;
+	destory_All_reads(&R_INF);
+	return 0;
 }
