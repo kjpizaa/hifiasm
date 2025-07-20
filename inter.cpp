@@ -22999,15 +22999,11 @@ ma_ug_t *ul_realignment_back(const ug_opt_t *uopt, asg_t *sg, uint32_t double_ch
 #include "ref_genome.h"
 
 // ===============================
-// 参考基因组Block标记（方案1：使用pidx字段）
-// ===============================
-
-// ✅ 方案1：使用pidx字段的特殊值标记参考基因组
-// 优势：pidx是32位完整字段，不会与现有UL逻辑冲突
-#define REF_PIDX_MARKER     0xFFFFFFFF  // pidx的特殊值标记参考基因组
-#define BLOCK_SET_REF(block) ((block)->pidx = REF_PIDX_MARKER)
-#define BLOCK_IS_REF(block)  ((block)->pidx == REF_PIDX_MARKER)
-#define BLOCK_CLEAR_REF(block) ((block)->pidx = (uint32_t)-1)  // 清除标记
+// 参考基因组Block标记：利用 el 位标记参考块
+// el==1 表示该 block 来自参考基因组
+#define BLOCK_SET_REF(block)   ((block)->el = 1)
+#define BLOCK_IS_REF(block)    ((block)->el != 0)
+#define BLOCK_CLEAR_REF(block) ((block)->el = 0)
 
 // ===============================
 // 新增函数1：确保unitig序列可用 (15行)
@@ -23085,8 +23081,8 @@ int overlap_to_uc_block_ref_mode(overlap_region_alloc *overlap_list,
         block->pdis = (uint32_t)-1;           // 无前驱距离
         block->aidx = (uint32_t)-1;           // 无辅助索引
 
-        // ✅ 使用方案1：用pidx字段标记参考基因组
-        BLOCK_SET_REF(block);  // pidx = REF_PIDX_MARKER (0xFFFFFFFF)
+        // 标记为参考基因组block
+        BLOCK_SET_REF(block);
         valid_blocks++;
     }
 
@@ -23171,7 +23167,7 @@ int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
         ha_get_ul_candidates_interface(ab, uid, (char*)seq, utg->len,
                                      opt->ul_mz_win, opt->ul_mer_length, ref_index,
                                      &overlap_list, &overlap_list_hp, &cl,
-                                     opt->ul_error_rate, opt->max_n_chain, 1,
+                                     opt->max_ov_diff_final, opt->max_n_chain, 1,
                                      &k_flag, &r_buf, NULL, &dbg_ct, &sp,
                                      1, NULL);
 
