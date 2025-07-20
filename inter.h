@@ -140,11 +140,15 @@ void sort_uc_block_qe(uc_block_t* a, uint64_t a_n);
 #include "ref_genome.h"
 #include "Hash_Table.h"
 
-// 参考基因组Block标记宏
-#define REF_PIDX_MARKER     0xFFFFFFFF
-#define BLOCK_SET_REF(block) ((block)->pidx = REF_PIDX_MARKER)
-#define BLOCK_IS_REF(block)  ((block)->pidx == REF_PIDX_MARKER)
-#define BLOCK_CLEAR_REF(block) ((block)->pidx = (uint32_t)-1)
+#ifdef ENABLE_REF_GENOME_V4
+// 参考基因组Block标记宏 (uc_block_t.el 高位)
+#define BLOCK_REF             (1u<<15)
+#define BLOCK_SET_REF(block)   ((block)->el |= BLOCK_REF)
+#define BLOCK_IS_REF(block)    ((block)->el & BLOCK_REF)
+#define BLOCK_CLEAR_REF(block) ((block)->el &= ~BLOCK_REF)
+
+extern ma_ug_t *ug; /* global unitig graph for reference-guided pipeline */
+#endif
 
 // 函数声明
 const char* ensure_unitig_seq(ma_ug_t* ug, uint32_t uid);

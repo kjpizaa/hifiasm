@@ -2216,13 +2216,14 @@ int ha_assemble(void)
         asm_opt.gap_fuzz, asm_opt.min_drop_rate, asm_opt.max_drop_rate, asm_opt.output_file_name, asm_opt.large_pop_bubble_size, 0, !ovlp_loaded);
 #ifdef ENABLE_REF_GENOME_V4
     if (asm_opt.ref_fasta && asm_opt.ref_fasta[0]) {
-        execute_reference_guided_assembly(NULL, &asm_opt);
+        extern ma_ug_t *ug;
+        if (ug && ug->u.n > 0) {
+            execute_reference_guided_assembly(ug, &asm_opt);
+        }
+        cleanup_reference_genome_resources();
     }
 #endif
     destory_All_reads(&R_INF);
-#ifdef ENABLE_REF_GENOME_V4
-    if (asm_opt.ref_fasta) cleanup_reference_genome_resources();
-#endif
     return 0;
 }
 
@@ -2297,12 +2298,13 @@ int ha_assemble_pair(void)
         asm_opt.gap_fuzz, asm_opt.min_drop_rate, asm_opt.max_drop_rate, asm_opt.output_file_name, asm_opt.large_pop_bubble_size, 0, !ovlp_loaded);
 #ifdef ENABLE_REF_GENOME_V4
         if (asm_opt.ref_fasta && asm_opt.ref_fasta[0]) {
-            execute_reference_guided_assembly(NULL, &asm_opt);
+            extern ma_ug_t *ug;
+            if (ug && ug->u.n > 0) {
+                execute_reference_guided_assembly(ug, &asm_opt);
+            }
+            cleanup_reference_genome_resources();
         }
 #endif
         destory_All_reads(&R_INF);
-#ifdef ENABLE_REF_GENOME_V4
-        if (asm_opt.ref_fasta) cleanup_reference_genome_resources();
-#endif
         return 0;
 }

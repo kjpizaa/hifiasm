@@ -20,10 +20,16 @@
 #include "gfa_ut.h"
 KSEQ_INIT(gzFile, gzread)
 
-// Provide a weak fallback for ug_consensus if the real implementation
-// is not linked. This stub simply leaves the unitig sequence empty.
-#ifndef HAVE_UG_CONSENSUS
-extern "C" void ug_consensus(ma_ug_t *ug, uint32_t uid, All_reads *R_INF, int flag) {}
+#ifdef ENABLE_REF_GENOME_V4
+ma_ug_t *ug = NULL; // global unitig graph for reference-guided pipeline
+extern void gen_ug_opt_t(ug_opt_t *opt, ma_hit_t_alloc* sources,
+                         ma_hit_t_alloc* reverse_sources, int64_t max_hang,
+                         int64_t min_ovlp, int64_t gap_fuzz, int64_t min_dp,
+                         uint64_t* readLen, ma_sub_t *coverage_cut,
+                         R_to_U* ruIndex, long long tipsLen,
+                         float tip_drop_ratio, long long stops_threshold,
+                         float chimeric_rate, float drop_ratio,
+                         bub_label_t* b_mask_t, telo_end_t *te);
 #endif
 
 #define oreg_xe_lt(a, b) (((uint64_t)(a).x_pos_e<<32|(a).x_pos_s) < ((uint64_t)(b).x_pos_e<<32|(b).x_pos_s))
@@ -22886,33 +22892,36 @@ ma_ug_t *ul_realignment(const ug_opt_t *uopt, asg_t *sg, uint32_t double_check_c
 	cutoff = REA_ALIGN_CUTOFF;
 	init_mg_opt(&opt, !(asm_opt.flag&HA_F_NO_HPC), 19, 10, cutoff, asm_opt.max_n_chain, asm_opt.ul_error_rate, asm_opt.ul_error_rate, asm_opt.ul_error_rate_low, asm_opt.ul_error_rate_hpc, asm_opt.ul_ec_round);
 	init_uldat_t(&sl, NULL, NULL, &opt, CHUNK_SIZE, asm_opt.thread_num, uopt, NULL);
-	ma_ug_t *ug = gen_polished_ug(uopt, sg);
+        ma_ug_t *ug = gen_polished_ug(uopt, sg);
+#ifdef ENABLE_REF_GENOME_V4
+        ::ug = ug;
+#endif
 	// dd_ug(sg, ug, uopt->coverage_cut, uopt->sources, uopt->ruIndex, "UL.sa");
 	// debug_sl_compress_base_disk_0(&sl, asm_opt.ar);
 	// detect_outlier_len("ul_realignment");
 	clear_all_ul_t(&UL_INF);
 
 	///for debug interval
-	if(!load_all_ul_t(&UL_INF, gfa_name, &R_INF, ug)) {
-		gen_UL_reovlps(&sl, ug, sg, gfa_name, cutoff, 1);
-		// exit(1);
-		write_all_ul_t(&UL_INF, gfa_name, ug);
-	} else{
-		free(UL_INF.ridx.idx.a); free(UL_INF.ridx.occ.a); 
-		memset(&(UL_INF.ridx), 0, sizeof((UL_INF.ridx)));
-		if(double_check_cache){
-			if(drenew_UL_reovlps(&sl, ug, sg, gfa_name, cutoff)) {
-				write_all_ul_t(&UL_INF, gfa_name, ug);
-			}
-		}
-	}
+        if(!load_all_ul_t(&UL_INF, gfa_name, &R_INF, ug)) {
+                gen_UL_reovlps(&sl, ug, sg, gfa_name, cutoff, 1);
+                // exit(1);
+                write_all_ul_t(&UL_INF, gfa_name, ug);
+        } else{
+                free(UL_INF.ridx.idx.a); free(UL_INF.ridx.occ.a);
+                memset(&(UL_INF.ridx), 0, sizeof((UL_INF.ridx)));
+                if(double_check_cache){
+                        if(drenew_UL_reovlps(&sl, ug, sg, gfa_name, cutoff)) {
+                                write_all_ul_t(&UL_INF, gfa_name, ug);
+                        }
+                }
+        }
 
-	// print_ul_alignment(ug, &UL_INF, 147, "init-0");
-	filter_ul_ug(ug);
-	// print_ul_alignment(ug, &UL_INF, 147, "init-1");
-	gen_ul_vec_rid_t(&UL_INF, NULL, ug);
-	// print_ul_alignment(ug, &UL_INF, 147, "init-2");
-	update_ug_arch_ul_mul(ug);
+        // print_ul_alignment(ug, &UL_INF, 147, "init-0");
+        filter_ul_ug(ug);
+        // print_ul_alignment(ug, &UL_INF, 147, "init-1");
+        gen_ul_vec_rid_t(&UL_INF, NULL, ug);
+        // print_ul_alignment(ug, &UL_INF, 147, "init-2");
+        update_ug_arch_ul_mul(ug);
 
 	// exit(1);
 	// print_ul_alignment(ug, &UL_INF, 41927, "init-3");
@@ -22925,8 +22934,8 @@ ma_ug_t *ul_realignment(const ug_opt_t *uopt, asg_t *sg, uint32_t double_check_c
 	// print_ul_ovlps(&UL_INF, 0); print_ul_ovlps(&UL_INF, 1);
 
 	// destory_all_ul_t(&UL_INF); 
-	free(gfa_name);
-	return ug;
+        free(gfa_name);
+        return ug;
 }
 
 
@@ -22942,33 +22951,36 @@ ma_ug_t *ul_realignment_back(const ug_opt_t *uopt, asg_t *sg, uint32_t double_ch
 	cutoff = REA_ALIGN_CUTOFF;
 	init_mg_opt(&opt, !(asm_opt.flag&HA_F_NO_HPC), 19, 10, cutoff, asm_opt.max_n_chain, asm_opt.ul_error_rate, asm_opt.ul_error_rate, asm_opt.ul_error_rate_low, asm_opt.ul_error_rate_hpc, asm_opt.ul_ec_round);
 	init_uldat_t(&sl, NULL, NULL, &opt, CHUNK_SIZE, asm_opt.thread_num, uopt, NULL);
-	ma_ug_t *ug = gen_polished_ug(uopt, sg);
-	// dd_ug(sg, ug, uopt->coverage_cut, uopt->sources, uopt->ruIndex, "UL.sa");
+        ma_ug_t *ug = gen_polished_ug(uopt, sg);
+#ifdef ENABLE_REF_GENOME_V4
+        ::ug = ug;
+#endif
+        // dd_ug(sg, ug, uopt->coverage_cut, uopt->sources, uopt->ruIndex, "UL.sa");
 	// debug_sl_compress_base_disk_0(&sl, asm_opt.ar);
 	// detect_outlier_len("ul_realignment");
 	clear_all_ul_t(&UL_INF);
 
 	///for debug interval
-	if(!load_all_ul_t(&UL_INF, gfa_name, &R_INF, ug)) {
-		gen_UL_reovlps(&sl, ug, sg, gfa_name, cutoff, 0);
-		// exit(1);
-		write_all_ul_t(&UL_INF, gfa_name, ug);
-	} else{
-		free(UL_INF.ridx.idx.a); free(UL_INF.ridx.occ.a); 
-		memset(&(UL_INF.ridx), 0, sizeof((UL_INF.ridx)));
-		if(double_check_cache){
-			if(drenew_UL_reovlps(&sl, ug, sg, gfa_name, cutoff)) {
-				write_all_ul_t(&UL_INF, gfa_name, ug);
-			}
-		}
-	}
+        if(!load_all_ul_t(&UL_INF, gfa_name, &R_INF, ug)) {
+                gen_UL_reovlps(&sl, ug, sg, gfa_name, cutoff, 0);
+                // exit(1);
+                write_all_ul_t(&UL_INF, gfa_name, ug);
+        } else{
+                free(UL_INF.ridx.idx.a); free(UL_INF.ridx.occ.a);
+                memset(&(UL_INF.ridx), 0, sizeof((UL_INF.ridx)));
+                if(double_check_cache){
+                        if(drenew_UL_reovlps(&sl, ug, sg, gfa_name, cutoff)) {
+                                write_all_ul_t(&UL_INF, gfa_name, ug);
+                        }
+                }
+        }
 
-	// print_ul_alignment(ug, &UL_INF, 41927, "init-0");
-	filter_ul_ug(ug);
-	// print_ul_alignment(ug, &UL_INF, 41927, "init-1");
-	gen_ul_vec_rid_t(&UL_INF, NULL, ug);
-	// print_ul_alignment(ug, &UL_INF, 41927, "init-2");
-	update_ug_arch_ul_mul(ug);
+        // print_ul_alignment(ug, &UL_INF, 41927, "init-0");
+        filter_ul_ug(ug);
+        // print_ul_alignment(ug, &UL_INF, 41927, "init-1");
+        gen_ul_vec_rid_t(&UL_INF, NULL, ug);
+        // print_ul_alignment(ug, &UL_INF, 41927, "init-2");
+        update_ug_arch_ul_mul(ug);
 	// print_ul_alignment(ug, &UL_INF, 41927, "init-3");
 	// kt_for(asm_opt.thread_num, update_ug_arch_ul, ug, ug->g->n_arc);
 	// print_all_ul_t_stat(&UL_INF);
@@ -22979,23 +22991,19 @@ ma_ug_t *ul_realignment_back(const ug_opt_t *uopt, asg_t *sg, uint32_t double_ch
 	// print_ul_ovlps(&UL_INF, 0); print_ul_ovlps(&UL_INF, 1);
 
 	// destory_all_ul_t(&UL_INF); 
-	free(gfa_name);
-	return ug;
+        free(gfa_name);
+        return ug;
 }
 #ifdef ENABLE_REF_GENOME_V4
 
 #include "ref_genome.h"
 
 // ===============================
-// 参考基因组Block标记（方案1：使用pidx字段）
-// ===============================
-
-// ✅ 方案1：使用pidx字段的特殊值标记参考基因组
-// 优势：pidx是32位完整字段，不会与现有UL逻辑冲突
-#define REF_PIDX_MARKER     0xFFFFFFFF  // pidx的特殊值标记参考基因组
-#define BLOCK_SET_REF(block) ((block)->pidx = REF_PIDX_MARKER)
-#define BLOCK_IS_REF(block)  ((block)->pidx == REF_PIDX_MARKER)
-#define BLOCK_CLEAR_REF(block) ((block)->pidx = (uint32_t)-1)  // 清除标记
+// 参考基因组Block标记：利用 el 高位标记参考块
+#define BLOCK_REF             (1u<<15)
+#define BLOCK_SET_REF(block)   ((block)->el |= BLOCK_REF)
+#define BLOCK_IS_REF(block)    ((block)->el & BLOCK_REF)
+#define BLOCK_CLEAR_REF(block) ((block)->el &= ~BLOCK_REF)
 
 // ===============================
 // 新增函数1：确保unitig序列可用 (15行)
@@ -23012,13 +23020,7 @@ const char* ensure_unitig_seq(ma_ug_t* ug, uint32_t uid) {
     if (!ug || uid >= ug->u.n) return NULL;
 
     ma_utg_t* utg = &ug->u.a[uid];
-    if (utg->s == NULL) {
-        // 基于项目知识：调用已存在的共识生成函数
-        extern void ug_consensus(ma_ug_t *ug, uint32_t uid, All_reads *R_INF, int flag);
-        extern All_reads R_INF;
-        ug_consensus(ug, uid, &R_INF, 1);
-    }
-    return utg->s;
+    return utg->s; // 序列应在生成unitig图时已填充
 }
 
 // ===============================
@@ -23079,8 +23081,8 @@ int overlap_to_uc_block_ref_mode(overlap_region_alloc *overlap_list,
         block->pdis = (uint32_t)-1;           // 无前驱距离
         block->aidx = (uint32_t)-1;           // 无辅助索引
 
-        // ✅ 使用方案1：用pidx字段标记参考基因组
-        BLOCK_SET_REF(block);  // pidx = REF_PIDX_MARKER (0xFFFFFFFF)
+        // 标记为参考基因组block
+        BLOCK_SET_REF(block);
         valid_blocks++;
     }
 
@@ -23117,7 +23119,7 @@ int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
                                   const hifiasm_opt_t *opt) {
     if (!unitigs || !ref_index || !out_blocks || !out_count || !opt) return -1;
 
-    fprintf(stderr, "[M::%s] Processing %u unitigs → reference mapping\n",
+    fprintf(stderr, "[M::%s] Processing %zu unitigs → reference mapping\n",
             __func__, unitigs->u.n);
 
     uc_block_t **all_results = (uc_block_t**)calloc(unitigs->u.n, sizeof(uc_block_t*));
@@ -23165,7 +23167,7 @@ int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
         ha_get_ul_candidates_interface(ab, uid, (char*)seq, utg->len,
                                      opt->ul_mz_win, opt->ul_mer_length, ref_index,
                                      &overlap_list, &overlap_list_hp, &cl,
-                                     opt->ul_error_rate, opt->max_n_chain, 1,
+                                     opt->max_ov_diff_final, opt->max_n_chain, 1,
                                      &k_flag, &r_buf, NULL, &dbg_ct, &sp,
                                      1, NULL);
 
@@ -23300,21 +23302,21 @@ int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
 
     fprintf(stderr, "[M::%s] Added %lu reference blocks to UL_INF\n", __func__, (unsigned long)ref_count);
 
-    // 🎯 Step 3: 关键 - 直接调用ul_resolve！
-    // 这正是标准-UL模式调用的核心函数
-    // 基于项目知识：void ul_resolve(ma_ug_t *ug, const asg_t *rg, const ug_opt_t *uopt, int hap_n)
-
-    // 转换hifiasm_opt_t到ug_opt_t（必要的参数转换）
     ug_opt_t uopt;
-    memset(&uopt, 0, sizeof(ug_opt_t));
-    // 复制其他必要参数...
+    extern All_reads R_INF;
+    extern hifiasm_opt_t asm_opt;
+    gen_ug_opt_t(&uopt, R_INF.paf, R_INF.reverse_paf, opt->max_hang_Len,
+                 opt->min_overlap_Len, opt->gap_fuzz, opt->min_overlap_coverage,
+                 R_INF.read_length, NULL, NULL, asm_opt.max_short_tip*2, 0.15,
+                 3, 0.05, 0.9, NULL, NULL);
 
-    fprintf(stderr, "[M::%s] Calling ul_resolve (same as standard -UL mode)...\n", __func__);
-
-    // 🚀 调用项目知识中的ul_resolve - 这是-UL模式的核心！
     ul_resolve(unitigs, unitigs->g, &uopt, 0);
-
-    fprintf(stderr, "[M::%s] ul_resolve completed successfully\n", __func__);
+    sort_uc_block_qe(ref_blocks, ref_count);
+    ul_refine_alignment(&uopt, unitigs->g);
+    extend_coordinates(unitigs);
+    gen_ul_vec_rid_t(&UL_INF, NULL, unitigs);
+    update_ug_arch_ul_mul(unitigs);
+    filter_ul_ug(unitigs);
 
     free(ref_blocks);
 
