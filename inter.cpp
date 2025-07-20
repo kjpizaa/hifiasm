@@ -22894,7 +22894,28 @@ ma_ug_t *ul_realignment(const ug_opt_t *uopt, asg_t *sg, uint32_t double_check_c
 	init_uldat_t(&sl, NULL, NULL, &opt, CHUNK_SIZE, asm_opt.thread_num, uopt, NULL);
         ma_ug_t *ug = gen_polished_ug(uopt, sg);
 #ifdef ENABLE_REF_GENOME_V4
-        ::ug = ug;
+    ::ug = ug;  // 设置全局变量
+
+    // 🔧 在这里插入参考基因组集成！
+    extern ref_genome_t *global_ref_genome;
+    extern hifiasm_opt_t asm_opt;
+
+    if (global_ref_genome && asm_opt.ref_fasta && asm_opt.ref_fasta[0] && ug && ug->u.n > 0) {
+        fprintf(stderr, "[M::%s] Integrating reference genome into UL pipeline\n", __func__);
+
+        // 直接调用集成函数
+        int result = integrate_reference_blocks_to_existing_ul_pipeline(
+            ug,
+            (const ul_idx_t*)global_ref_genome->ul_index,
+            &asm_opt
+        );
+
+        if (result == 0) {
+            fprintf(stderr, "[M::%s] Reference integration successful\n", __func__);
+        } else {
+            fprintf(stderr, "[WARNING] Reference integration failed, continuing with standard UL\n");
+        }
+    }
 #endif
 	// dd_ug(sg, ug, uopt->coverage_cut, uopt->sources, uopt->ruIndex, "UL.sa");
 	// debug_sl_compress_base_disk_0(&sl, asm_opt.ar);
@@ -22938,62 +22959,6 @@ ma_ug_t *ul_realignment(const ug_opt_t *uopt, asg_t *sg, uint32_t double_check_c
         return ug;
 }
 
-
-ma_ug_t *ul_realignment_back(const ug_opt_t *uopt, asg_t *sg, uint32_t double_check_cache, const char *bin_file)
-{
-	fprintf(stderr, "[M::%s::] ==> starting UL\n", __func__);
-	mg_idxopt_t opt; uldat_t sl;
-	int32_t cutoff;
-	char* gfa_name = NULL; MALLOC(gfa_name, strlen(asm_opt.output_file_name)+50);
-	sprintf(gfa_name, "%s.%s", asm_opt.output_file_name, bin_file);
-
-	init_aux_table(); ha_opt_update_cov(&asm_opt, asm_opt.hom_cov);
-	cutoff = REA_ALIGN_CUTOFF;
-	init_mg_opt(&opt, !(asm_opt.flag&HA_F_NO_HPC), 19, 10, cutoff, asm_opt.max_n_chain, asm_opt.ul_error_rate, asm_opt.ul_error_rate, asm_opt.ul_error_rate_low, asm_opt.ul_error_rate_hpc, asm_opt.ul_ec_round);
-	init_uldat_t(&sl, NULL, NULL, &opt, CHUNK_SIZE, asm_opt.thread_num, uopt, NULL);
-        ma_ug_t *ug = gen_polished_ug(uopt, sg);
-#ifdef ENABLE_REF_GENOME_V4
-        ::ug = ug;
-#endif
-        // dd_ug(sg, ug, uopt->coverage_cut, uopt->sources, uopt->ruIndex, "UL.sa");
-	// debug_sl_compress_base_disk_0(&sl, asm_opt.ar);
-	// detect_outlier_len("ul_realignment");
-	clear_all_ul_t(&UL_INF);
-
-	///for debug interval
-        if(!load_all_ul_t(&UL_INF, gfa_name, &R_INF, ug)) {
-                gen_UL_reovlps(&sl, ug, sg, gfa_name, cutoff, 0);
-                // exit(1);
-                write_all_ul_t(&UL_INF, gfa_name, ug);
-        } else{
-                free(UL_INF.ridx.idx.a); free(UL_INF.ridx.occ.a);
-                memset(&(UL_INF.ridx), 0, sizeof((UL_INF.ridx)));
-                if(double_check_cache){
-                        if(drenew_UL_reovlps(&sl, ug, sg, gfa_name, cutoff)) {
-                                write_all_ul_t(&UL_INF, gfa_name, ug);
-                        }
-                }
-        }
-
-        // print_ul_alignment(ug, &UL_INF, 41927, "init-0");
-        filter_ul_ug(ug);
-        // print_ul_alignment(ug, &UL_INF, 41927, "init-1");
-        gen_ul_vec_rid_t(&UL_INF, NULL, ug);
-        // print_ul_alignment(ug, &UL_INF, 41927, "init-2");
-        update_ug_arch_ul_mul(ug);
-	// print_ul_alignment(ug, &UL_INF, 41927, "init-3");
-	// kt_for(asm_opt.thread_num, update_ug_arch_ul, ug, ug->g->n_arc);
-	// print_all_ul_t_stat(&UL_INF);
-	// kt_for(sl.n_thread, update_ovlp_src, &sl, R_INF.total_reads);
-	// kt_for(sl.n_thread, update_ovlp_src_bl, &sl, R_INF.total_reads);
-	
-	// print_ovlp_src_bl_stat(&UL_INF, sl.uopt);
-	// print_ul_ovlps(&UL_INF, 0); print_ul_ovlps(&UL_INF, 1);
-
-	// destory_all_ul_t(&UL_INF); 
-        free(gfa_name);
-        return ug;
-}
 #ifdef ENABLE_REF_GENOME_V4
 
 #include "ref_genome.h"
