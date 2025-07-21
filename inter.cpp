@@ -165,4 +165,159 @@ int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
                                                       const hifiasm_opt_t *opt);
 
 #endif // ENABLE_REF_GENOME_V4
+#ifdef ENABLE_REF_GENOME_V4
+
+// Ensure unitig sequence is allocated. When missing, allocate an N-filled
+// string of the desired length. This is a lightweight fallback used when
+// the sequence is not generated during earlier steps.
+const char* ensure_unitig_seq(ma_ug_t* ug, uint32_t uid)
+{
+    if (!ug || uid >= ug->u.n) return NULL;
+    ma_utg_t *u = &ug->u.a[uid];
+    if (u->s) return u->s;
+    u->s = (char*)calloc(u->len + 1, 1);
+    if (!u->s) return NULL;
+    memset(u->s, 'N', u->len);
+    u->s[u->len] = '\0';
+    return u->s;
+}
+
+// Convert overlap regions to uc_block_t list. Only long and high-quality
+// overlaps are retained. BLOCK_REF is set on all generated blocks.
+int overlap_to_uc_block_ref_mode(overlap_region_alloc *overlap_list,
+                                uint32_t query_unitig_id,
+                                uc_block_t **out_blocks,
+                                uint64_t *out_count)
+{
+    if (!overlap_list || !out_blocks || !out_count) return -1;
+    *out_blocks = NULL; *out_count = 0;
+    if (overlap_list->length == 0) return 0;
+
+    uc_block_t *res = (uc_block_t*)calloc(overlap_list->length, sizeof(uc_block_t));
+    if (!res) return -1;
+
+    uint64_t cnt = 0;
+    for (uint64_t i = 0; i < overlap_list->length; i++) {
+        overlap_region *ov = &overlap_list->list[i];
+        if (ov->overlapLen < 500) continue;
+        double er = 1.0 - (double)ov->align_length / (double)(ov->overlapLen?ov->overlapLen:1);
+        if (er > 0.15) continue;
+
+        uc_block_t *b = &res[cnt++];
+        b->hid = ov->y_id;      // reference id
+        b->qs = ov->x_pos_s; b->qe = ov->x_pos_e;
+        b->ts = ov->y_pos_s; b->te = ov->y_pos_e;
+        b->rev = ov->y_pos_strand;
+        b->pchain = 0; b->base = 0; b->pidx = b->pdis = b->aidx = (uint32_t)-1;
+        b->el = 0;             // normal block
+        BLOCK_SET_REF(b);      // mark as reference-derived
+    }
+
+    if (cnt == 0) { free(res); return 0; }
+    *out_blocks = res; *out_count = cnt;
+    return 0;
+}
+
+// Map all unitigs to the reference index. Results of each unitig are
+// converted to uc_block_t via overlap_to_uc_block_ref_mode and concatenated
+// into a single array returned in out_blocks/out_count.
+int unitigs_map_to_reference_batch(ma_ug_t *unitigs,
+                                  const ul_idx_t *ref_index,
+                                  uc_block_t **out_blocks,
+                                  uint64_t *out_count,
+                                  const hifiasm_opt_t *opt)
+{
+    if (!unitigs || !ref_index || !out_blocks || !out_count) return -1;
+    *out_blocks = NULL; *out_count = 0;
+
+    uc_block_t **all_results = (uc_block_t**)calloc(unitigs->u.n, sizeof(uc_block_t*));
+    uint64_t *all_counts = (uint64_t*)calloc(unitigs->u.n, sizeof(uint64_t));
+    if (!all_results || !all_counts) { free(all_results); free(all_counts); return -1; }
+
+    uint64_t total = 0;
+    for (uint32_t i = 0; i < unitigs->u.n; i++) {
+        const char *seq = ensure_unitig_seq(unitigs, i);
+        if (!seq) continue;
+        uint64_t len = unitigs->u.a[i].len;
+
+        overlap_region_alloc ov; init_overlap_region_alloc(&ov);
+        overlap_region_alloc ov_hp; init_overlap_region_alloc(&ov_hp);
+        Candidates_list cl; init_Candidates_list(&cl);
+        ha_abufl_t *ab = ha_abufl_init();
+
+        ha_get_ul_candidates_interface(ab, i, (char*)seq, len,
+                opt->ul_mz_win ? opt->ul_mz_win : opt->mz_win,
+                opt->ul_mer_length ? opt->ul_mer_length : opt->k_mer_length,
+                ref_index, &ov, &ov_hp, &cl, 0, opt->max_n_chain, 1,
+                NULL, NULL, NULL, NULL, 0, NULL);
+
+        ha_abufl_destroy(ab);
+
+        overlap_to_uc_block_ref_mode(&ov, i, &all_results[i], &all_counts[i]);
+        total += all_counts[i];
+
+        destory_overlap_region_alloc(&ov); destory_overlap_region_alloc(&ov_hp);
+        destory_Candidates_list(&cl);
+    }
+
+    if (total == 0) { free(all_results); free(all_counts); return 0; }
+    uc_block_t *final_blocks = (uc_block_t*)malloc(total * sizeof(uc_block_t));
+    uint64_t off = 0;
+    for (uint32_t i = 0; i < unitigs->u.n; i++) {
+        if (all_counts[i] == 0) continue;
+        memcpy(final_blocks + off, all_results[i], all_counts[i] * sizeof(uc_block_t));
+        off += all_counts[i];
+        free(all_results[i]);
+    }
+    free(all_results); free(all_counts);
+
+    *out_blocks = final_blocks; *out_count = total;
+    return 0;
+}
+
+// Integrate reference blocks into UL_INF and trigger existing UL update
+// routines. Reference blocks are appended to the corresponding unitig
+// entry and marked with BLOCK_REF.
+int integrate_reference_blocks_to_existing_ul_pipeline(ma_ug_t *unitigs,
+                                                      const ul_idx_t *ref_index,
+                                                      const hifiasm_opt_t *opt)
+{
+    if (!unitigs || !ref_index) return -1;
+
+    uc_block_t *blocks = NULL; uint64_t n_block = 0;
+    if (unitigs_map_to_reference_batch(unitigs, ref_index, &blocks, &n_block, opt) != 0)
+        return -1;
+
+    fprintf(stderr, "[M::%s] Generated %lu reference blocks\n", __func__, (unsigned long)n_block);
+
+    if (n_block == 0) { free(blocks); return 0; }
+
+    if (unitigs->u.n > UL_INF.n) {
+        kv_resize(ul_vec_t, UL_INF, unitigs->u.n);
+        while (UL_INF.n < unitigs->u.n) {
+            memset(&UL_INF.a[UL_INF.n], 0, sizeof(ul_vec_t));
+            UL_INF.n++;
+        }
+    }
+
+    for (uint64_t i = 0; i < n_block; i++) {
+        uc_block_t *b = &blocks[i];
+        uint32_t uid = b->hid; // here hid stores query unitig id
+        if (uid >= UL_INF.n) continue;
+        ul_vec_t *p = &UL_INF.a[uid];
+        kv_push(uc_block_t, p->bb, *b);
+        BLOCK_SET_REF(&p->bb.a[p->bb.n-1]);
+    }
+
+    free(blocks);
+
+    filter_ul_ug(unitigs);
+    gen_ul_vec_rid_t(&UL_INF, NULL, unitigs);
+    update_ug_arch_ul_mul(unitigs);
+
+    fprintf(stderr, "[M::%s] Added %lu reference blocks to UL_INF\n", __func__, (unsigned long)n_block);
+    return 0;
+}
+
+#endif // ENABLE_REF_GENOME_V4
 #endif // __INTER__ (这个必须是文件的最后一行)
