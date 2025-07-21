@@ -1274,3 +1274,13 @@ int ref_genome_create_summary(const ref_genome_t *ref, const char *output_file)
 ref_genome_t *global_ref_genome = NULL;
 #endif
 
+#ifdef ENABLE_REF_GENOME_V4
+void cleanup_reference_genome_resources(void)
+{
+    if (global_ref_genome) {
+        ref_genome_destroy(global_ref_genome);
+        global_ref_genome = NULL;
+    }
+}
+#endif
+
