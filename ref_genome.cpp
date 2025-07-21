@@ -1274,3 +1274,50 @@ int ref_genome_create_summary(const ref_genome_t *ref, const char *output_file)
 ref_genome_t *global_ref_genome = NULL;
 #endif
 
+#ifdef ENABLE_REF_GENOME_V4
+/**
+ * @brief High level pipeline to load and index the reference genome
+ *        for reference-guided assembly.
+ *
+ * This function initializes the global reference genome structure,
+ * loads the FASTA file specified on the command line, builds the
+ * unified sequence, converts it to All_reads format and constructs the
+ * UL index.  It then prepares the reference for the virtual ONT
+ * infrastructure.  On any failure the allocated resources are cleaned
+ * up and -1 is returned.
+ */
+int ref_genome_processing_pipeline(const hifiasm_opt_t *opt)
+{
+    if (!opt || !opt->ref_fasta || !opt->ref_fasta[0]) return -1;
+
+    ref_config_t cfg = ref_config_default();
+
+    global_ref_genome = ref_genome_init();
+    if (!global_ref_genome) return -1;
+
+    if (ref_genome_load_fasta(global_ref_genome, opt->ref_fasta) != 0) goto fail;
+    if (ref_genome_build_unified_sequence(global_ref_genome, &cfg) != 0) goto fail;
+    if (ref_genome_convert_to_all_reads(global_ref_genome, &cfg) != 0) goto fail;
+    if (ref_genome_build_ul_index(global_ref_genome) != 0) goto fail;
+    if (prepare_reference_for_virtual_ont(global_ref_genome) != 0) goto fail;
+
+    return 0;
+
+fail:
+    ref_genome_destroy(global_ref_genome);
+    global_ref_genome = NULL;
+    return -1;
+}
+
+/**
+ * @brief Release global reference genome resources
+ */
+void cleanup_reference_genome_resources(void)
+{
+    if (global_ref_genome) {
+        ref_genome_destroy(global_ref_genome);
+        global_ref_genome = NULL;
+    }
+}
+#endif
+
